@@ -348,9 +348,12 @@ impl Daemon {
     /// a time, so syncing at once would hold up the first copy after unlock.
     fn spawn_sync(self: &Arc<Self>) {
         let me = self.clone();
+        let epoch = self.epoch();
         tokio::spawn(async move {
             tokio::time::sleep(std::time::Duration::from_secs(10)).await;
-            if !me.is_unlocked() {
+            // A lock in between ends this session's sync; a later session
+            // schedules its own.
+            if !me.is_unlocked() || me.epoch() != epoch {
                 return;
             }
             if let Err(e) = me.sync().await {

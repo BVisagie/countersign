@@ -97,13 +97,12 @@ impl Daemon {
     ) -> Result<u64, IpcError> {
         let clipboard = self.clipboard.clone();
         let counter = self.epoch_counter();
-        let allow = move |current: Option<u64>| {
-            counter.load(Ordering::SeqCst) == epoch && replacing.is_none_or(|g| current == Some(g))
-        };
+        let allow = move || counter.load(Ordering::SeqCst) == epoch;
         let expires = Duration::from_secs(u64::from(expires_secs));
-        let result = tokio::task::spawn_blocking(move || clipboard.copy(value, true, expires, allow))
-            .await
-            .map_err(|e| IpcError::new(ErrorCode::Internal, e.to_string()))?;
+        let result =
+            tokio::task::spawn_blocking(move || clipboard.copy(value, true, expires, allow, replacing))
+                .await
+                .map_err(|e| IpcError::new(ErrorCode::Internal, e.to_string()))?;
         result.map_err(|e| {
             if e.is::<Refused>() {
                 IpcError::new(ErrorCode::Locked, "The vault was locked before the copy finished.")

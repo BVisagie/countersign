@@ -58,18 +58,27 @@ impl Clipboard {
     /// Offers `value` on the clipboard and returns its generation. Blocking;
     /// call it from a blocking task.
     ///
-    /// `allow` runs under the clipboard's lock, after the compositor shows
-    /// the offer and before it is registered, with the generation currently
-    /// registered as ours. Returning false withdraws the value. A backstop,
-    /// armed before anything is published, clears it `expires` (plus a grace
+    /// The clipboard's lock is held for the whole copy, so copies and clears
+    /// never interleave. With `replacing`, the copy proceeds only while that
+    /// generation is still ours; publishing it then cancels the old offer.
+    /// `allow` runs after the compositor shows the new offer and before it is
+    /// registered; returning false withdraws it. A backstop, armed before
+    /// anything is published, clears the value `expires` (plus a grace
     /// period) later even if the caller's own timer never runs.
     pub fn copy(
         self: &Arc<Self>,
         value: Zeroizing<String>,
         sensitive: bool,
         expires: Duration,
-        allow: impl FnOnce(Option<u64>) -> bool,
+        allow: impl FnOnce() -> bool,
+        replacing: Option<u64>,
     ) -> Result<u64> {
+        let mut current = self.current.lock().expect("clipboard state");
+        if let Some(previous) = replacing
+            && !current.as_ref().is_some_and(|o| o.generation == previous && o.alive.load(Ordering::SeqCst))
+        {
+            return Err(Refused.into());
+        }
         let generation = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
         let me = self.clone();
         std::thread::Builder::new().name("countersign-clipboard-expiry".into()).spawn(move || {
@@ -118,9 +127,7 @@ impl Clipboard {
             }
             std::thread::sleep(Duration::from_millis(3));
         }
-        let mut current = self.current.lock().expect("clipboard state");
-        let live = current.as_ref().filter(|o| o.alive.load(Ordering::SeqCst)).map(|o| o.generation);
-        if !allow(live) {
+        if !allow() {
             if published() == Some(generation) {
                 let _ = copy::clear(ClipboardType::Regular, Seat::All);
             }
@@ -162,5 +169,43 @@ impl Clipboard {
             *current = None;
         }
         true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn value(text: &str) -> Zeroizing<String> {
+        Zeroizing::new(text.to_owned())
+    }
+
+    /// Uses the real clipboard: run in a Wayland session with
+    /// `cargo test -p countersign-daemon -- --ignored clipboard`.
+    #[test]
+    #[ignore = "needs a Wayland session; replaces the clipboard"]
+    fn clipboard_replacement_and_guards() {
+        let clipboard = Arc::new(Clipboard::default());
+        let ttl = Duration::from_secs(10);
+        let first = clipboard.copy(value("first"), true, ttl, || true, None).unwrap();
+        assert_eq!(published(), Some(first));
+
+        // A replacement while the first value is ours succeeds, even though
+        // publishing it cancels the first offer.
+        let second = clipboard.copy(value("second"), true, ttl, || true, Some(first)).expect("replacement");
+        assert_eq!(published(), Some(second));
+        assert!(clipboard.is_current(second));
+
+        // Replacing a value that is no longer ours, or a refused guard,
+        // leaves the current value alone or withdraws the new one.
+        assert!(clipboard.copy(value("third"), true, ttl, || true, Some(first)).is_err());
+        assert_eq!(published(), Some(second));
+        assert!(clipboard.copy(value("fourth"), true, ttl, || false, None).is_err());
+        assert_eq!(published(), None);
+
+        let last = clipboard.copy(value("fifth"), true, ttl, || true, None).unwrap();
+        assert!(clipboard.clear_if_ours(None));
+        assert_eq!(published(), None);
+        assert!(!clipboard.is_current(last));
     }
 }

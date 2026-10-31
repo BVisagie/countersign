@@ -79,6 +79,30 @@ impl Serve {
     /// Starts `bw serve` and waits until it answers. With a session key the
     /// server starts unlocked; this restores a session after the child exits.
     pub async fn start(cli: &Cli, session: Option<&SessionKey>) -> Result<Serve> {
+        let mut serve = Serve::spawn(cli, session).await?;
+        match serve.client.call(Method::GET, "/status", None, START_TIMEOUT).await {
+            Ok(_) => Ok(serve),
+            Err(BwError::Disconnected | BwError::Timeout) => {
+                let _ = tokio::time::timeout(Duration::from_secs(5), serve.child.wait()).await;
+                let text = serve.diagnostic_text();
+                serve.shutdown().await;
+                Err(match text.as_str() {
+                    "" => BwError::Disconnected,
+                    t if t.contains("You are not logged in.") => BwError::NotLoggedIn,
+                    t => BwError::Cli(t.chars().take(300).collect()),
+                })
+            }
+            Err(e) => {
+                serve.shutdown().await;
+                Err(e)
+            }
+        }
+    }
+
+    /// Starts `bw serve` without waiting for it to answer, so the caller can
+    /// keep the child where it can be stopped while it starts. Check
+    /// readiness with [`Serve::ready`].
+    pub async fn spawn(cli: &Cli, session: Option<&SessionKey>) -> Result<Serve> {
         let (ours, theirs) = StdUnixStream::pair()?;
         let fd = theirs.as_raw_fd();
         let mut cmd = cli.command();
@@ -129,29 +153,17 @@ impl Serve {
                 tracing::debug!("bw serve connection closed: {e}");
             }
         });
-        let mut serve = Serve {
+        Ok(Serve {
             child,
             client: ServeClient { sender: Arc::new(Mutex::new(sender)) },
             connection,
             diagnostics,
-        };
-        match serve.client.call(Method::GET, "/status", None, START_TIMEOUT).await {
-            Ok(_) => Ok(serve),
-            Err(BwError::Disconnected | BwError::Timeout) => {
-                let _ = tokio::time::timeout(Duration::from_secs(5), serve.child.wait()).await;
-                let text = serve.diagnostic_text();
-                serve.shutdown().await;
-                Err(match text.as_str() {
-                    "" => BwError::Disconnected,
-                    t if t.contains("You are not logged in.") => BwError::NotLoggedIn,
-                    t => BwError::Cli(t.chars().take(300).collect()),
-                })
-            }
-            Err(e) => {
-                serve.shutdown().await;
-                Err(e)
-            }
-        }
+        })
+    }
+
+    /// Waits until a spawned child answers.
+    pub async fn ready(client: &ServeClient) -> Result<()> {
+        client.call(Method::GET, "/status", None, START_TIMEOUT).await.map(drop)
     }
 
     pub fn client(&self) -> &ServeClient {

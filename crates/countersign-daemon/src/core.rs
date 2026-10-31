@@ -363,17 +363,48 @@ impl Daemon {
         }
         let epoch = self.epoch();
         let cli = self.cli()?;
-        let serve = Serve::start(&cli, Some(&key)).await.map_err(ipc_error)?;
-        let client = self.stage(serve, epoch).await?;
+        self.update_status(|s| s.vault = VaultState::Unlocking);
+        let client = match self.start_staged(&cli, &key, epoch).await {
+            Ok(client) => client,
+            Err(e) => {
+                self.settle_locked(epoch);
+                return Err(e);
+            }
+        };
         match client.status().await {
             Ok(s) if s.status == AuthStatus::Unlocked => self.open(key, epoch).await,
             _ => {
                 if let Some(serve) = self.unstage(epoch) {
                     serve.shutdown().await;
                 }
+                self.settle_locked(epoch);
                 Err(IpcError::new(ErrorCode::Locked, "Unlock to continue."))
             }
         }
+    }
+
+    /// Starts a CLI that opens with `key`, staged from the moment it exists
+    /// so `lock` can stop it while it is still starting.
+    async fn start_staged(&self, cli: &Cli, key: &SessionKey, epoch: u64) -> Result<ServeClient, IpcError> {
+        let serve = Serve::spawn(cli, Some(key)).await.map_err(ipc_error)?;
+        let client = self.stage(serve, epoch).await?;
+        if let Err(e) = Serve::ready(&client).await {
+            if let Some(serve) = self.unstage(epoch) {
+                serve.shutdown().await;
+            }
+            return Err(ipc_error(e));
+        }
+        Ok(client)
+    }
+
+    /// Moves the staged CLI into the session, unless a lock took it.
+    fn promote(&self, key: SessionKey, epoch: u64) -> Result<ServeClient, IpcError> {
+        let mut slot = self.session.lock().expect("session");
+        let staged = if self.epoch() == epoch { self.opening.lock().expect("opening").take() } else { None };
+        let Some(serve) = staged else { return Err(locked_while_opening()) };
+        let client = serve.client().clone();
+        *slot = Some(Session { serve, key });
+        Ok(client)
     }
 
     /// Puts a CLI that is about to be unlocked where `lock` can stop it.
@@ -416,15 +447,7 @@ impl Daemon {
     /// Moves the staged, unlocked CLI into the session, builds the index,
     /// then marks the vault open. A lock at any point wins.
     async fn open(&self, key: SessionKey, epoch: u64) -> Result<(), IpcError> {
-        let client = {
-            let mut slot = self.session.lock().expect("session");
-            let staged =
-                if self.epoch() == epoch { self.opening.lock().expect("opening").take() } else { None };
-            let Some(serve) = staged else { return Err(locked_while_opening()) };
-            let client = serve.client().clone();
-            *slot = Some(Session { serve, key });
-            client
-        };
+        let client = self.promote(key, epoch)?;
         if let Err(e) = self.rebuild(&client, epoch).await {
             tracing::warn!("building the vault index failed: {e}");
         }
@@ -437,19 +460,6 @@ impl Daemon {
             self.update_status(|s| s.vault = VaultState::Unlocked);
         }
         self.emit(Event::VaultChanged);
-        Ok(())
-    }
-
-    /// Stores a session unless a lock happened since `epoch`. `lock` bumps
-    /// the epoch under the same mutex, so the check and the store cannot be
-    /// separated by a lock. Hands the session back when refused.
-    #[allow(clippy::result_large_err, reason = "hands the refused session back to be shut down")]
-    fn commit_session(&self, session: Session, epoch: u64) -> Result<(), Session> {
-        let mut slot = self.session.lock().expect("session");
-        if self.epoch.load(Ordering::SeqCst) != epoch {
-            return Err(session);
-        }
-        *slot = Some(session);
         Ok(())
     }
 
@@ -524,28 +534,35 @@ impl Daemon {
             }
         }
         let _op = self.ops.lock().await;
-        let epoch = self.epoch.load(Ordering::SeqCst);
-        let Some(Session { serve, key }) = self.session.lock().expect("session").take() else {
-            return Err(self.closed_error());
+        let (epoch, dead, key) = {
+            let mut slot = self.session.lock().expect("session");
+            let epoch = self.epoch();
+            match slot.take() {
+                None => return Err(self.closed_error()),
+                Some(mut session) => {
+                    // Another request may have restarted it while we waited.
+                    if !session.serve.has_exited() {
+                        let client = session.serve.client().clone();
+                        *slot = Some(session);
+                        return Ok(client);
+                    }
+                    let Session { serve, key } = session;
+                    (epoch, serve, key)
+                }
+            }
         };
-        serve.shutdown().await;
+        dead.shutdown().await;
         tracing::warn!("the Bitwarden CLI stopped; restarting it");
         let cli = self.cli()?;
-        let serve = match Serve::start(&cli, Some(&key)).await {
-            Ok(serve) => serve,
+        match self.start_staged(&cli, &key, epoch).await {
+            Ok(_) => self.promote(key, epoch),
             Err(e) => {
                 drop(key);
                 drop(_op);
                 self.lock(LockReason::Requested).await;
-                return Err(ipc_error(e));
+                Err(e)
             }
-        };
-        let client = serve.client().clone();
-        if let Err(Session { serve, .. }) = self.commit_session(Session { serve, key }, epoch) {
-            serve.shutdown().await;
-            return Err(self.closed_error());
         }
-        Ok(client)
     }
 
     fn closed_error(&self) -> IpcError {
