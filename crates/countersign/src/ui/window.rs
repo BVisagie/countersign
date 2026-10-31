@@ -586,6 +586,17 @@ impl MainWindow {
             });
         }
         self.window.add_controller(keys);
+        let clicks = gtk::GestureClick::new();
+        clicks.set_propagation_phase(gtk::PropagationPhase::Capture);
+        {
+            let weak = weak.clone();
+            clicks.connect_pressed(move |_, _, _, _| {
+                if let Some(me) = weak.upgrade() {
+                    me.app.activity();
+                }
+            });
+        }
+        self.window.add_controller(clicks);
 
         {
             let app = self.app.clone();

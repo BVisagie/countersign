@@ -71,7 +71,7 @@ pub struct Daemon {
     cli: Mutex<Option<Cli>>,
     session: Mutex<Option<Session>>,
     prepared: Mutex<Option<(Serve, Instant)>>,
-    epoch: AtomicU64,
+    epoch: Arc<AtomicU64>,
     vault: Mutex<Arc<VaultSnapshot>>,
     pub(crate) clipboard: Arc<Clipboard>,
     pub(crate) copy_timers: Mutex<CopyTimers>,
@@ -102,7 +102,7 @@ impl Daemon {
             cli: Mutex::new(None),
             session: Mutex::new(None),
             prepared: Mutex::new(None),
-            epoch: AtomicU64::new(0),
+            epoch: Arc::new(AtomicU64::new(0)),
             vault: Mutex::new(Arc::new(VaultSnapshot::default())),
             clipboard: Arc::new(Clipboard::default()),
             copy_timers: Mutex::new(CopyTimers::default()),
@@ -368,28 +368,62 @@ impl Daemon {
     }
 
     async fn install_session(&self, serve: Serve, key: SessionKey, epoch: u64) -> Result<(), IpcError> {
-        if self.epoch.load(Ordering::SeqCst) != epoch {
-            serve.shutdown().await;
-            self.update_status(|s| s.vault = VaultState::Locked);
-            return Err(IpcError::new(ErrorCode::Locked, "The vault was locked while it was opening."));
-        }
+        // Build the index before the vault counts as open.
         let client = serve.client().clone();
-        *self.session.lock().expect("session") = Some(Session { serve, key });
-        self.touch();
         if let Err(e) = self.rebuild(&client, epoch).await {
             tracing::warn!("building the vault index failed: {e}");
         }
-        self.update_status(|s| s.vault = VaultState::Unlocked);
-        self.emit(Event::VaultChanged);
+        self.touch();
+        match self.commit_session(Session { serve, key }, epoch, true) {
+            Ok(()) => {
+                self.emit(Event::VaultChanged);
+                Ok(())
+            }
+            Err(Session { serve, key }) => {
+                let _ = tokio::time::timeout(Duration::from_secs(3), serve.client().lock()).await;
+                serve.shutdown().await;
+                drop(key);
+                self.update_status(|s| {
+                    if s.vault == VaultState::Unlocking {
+                        s.vault = VaultState::Locked;
+                    }
+                });
+                Err(IpcError::new(ErrorCode::Locked, "The vault was locked while it was opening."))
+            }
+        }
+    }
+
+    /// Stores a session unless a lock happened since `epoch`. `lock` bumps
+    /// the epoch under the same mutex, so the check and the store cannot be
+    /// separated by a lock. Hands the session back when refused.
+    #[allow(clippy::result_large_err, reason = "hands the refused session back to be shut down")]
+    fn commit_session(&self, session: Session, epoch: u64, open: bool) -> Result<(), Session> {
+        let mut slot = self.session.lock().expect("session");
+        if self.epoch.load(Ordering::SeqCst) != epoch {
+            return Err(session);
+        }
+        *slot = Some(session);
+        if open {
+            self.update_status(|s| s.vault = VaultState::Unlocked);
+        }
         Ok(())
     }
 
     /// Locks immediately. Safe to call from any task, any number of times.
     pub async fn lock(&self, reason: LockReason) {
-        self.epoch.fetch_add(1, Ordering::SeqCst);
-        let session = self.session.lock().expect("session").take();
+        let session = {
+            let mut slot = self.session.lock().expect("session");
+            self.epoch.fetch_add(1, Ordering::SeqCst);
+            self.grants.lock().expect("grants").clear();
+            self.update_status(|s| {
+                if matches!(s.vault, VaultState::Unlocked | VaultState::Unlocking) {
+                    s.vault = VaultState::Locked;
+                }
+                s.syncing = false;
+            });
+            slot.take()
+        };
         let prepared = self.prepared.lock().expect("prepared").take();
-        self.grants.lock().expect("grants").clear();
         *self.vault.lock().expect("vault") = Arc::new(VaultSnapshot::default());
         let was_unlocked = session.is_some();
         self.copy_timers.lock().expect("timers").cancel();
@@ -407,12 +441,6 @@ impl Daemon {
                 },
             });
         }
-        self.update_status(|s| {
-            if matches!(s.vault, VaultState::Unlocked | VaultState::Unlocking) {
-                s.vault = VaultState::Locked;
-            }
-            s.syncing = false;
-        });
         if let Some(Session { serve, key }) = session {
             if tokio::time::timeout(Duration::from_secs(3), serve.client().lock()).await.is_err() {
                 tracing::warn!("the CLI did not confirm the lock in time");
@@ -462,11 +490,10 @@ impl Daemon {
             }
         };
         let client = serve.client().clone();
-        if self.epoch.load(Ordering::SeqCst) != epoch {
+        if let Err(Session { serve, .. }) = self.commit_session(Session { serve, key }, epoch, false) {
             serve.shutdown().await;
             return Err(self.closed_error());
         }
-        *self.session.lock().expect("session") = Some(Session { serve, key });
         Ok(client)
     }
 
@@ -481,18 +508,35 @@ impl Daemon {
         self.epoch.load(Ordering::SeqCst)
     }
 
+    /// The epoch counter itself, for checks that run off the async runtime.
+    pub(crate) fn epoch_counter(&self) -> Arc<AtomicU64> {
+        self.epoch.clone()
+    }
+
+    /// Whether a re-prompt was answered recently for this item.
+    pub(crate) fn has_grant(&self, id: &str) -> bool {
+        self.grants.lock().expect("grants").get(id).is_some_and(|at| at.elapsed() < REPROMPT_GRANT)
+    }
+
     /// Checks the master password again for items that require it, and
     /// adopts the session key the CLI rotates in the process.
     pub async fn verify_password(&self, item_id: &str, password: SecretString) -> Result<(), IpcError> {
         let client = self.client().await?;
         let _op = self.ops.lock().await;
+        let epoch = self.epoch();
         let key = client.unlock(&password).await.map_err(password_error)?;
         drop(password);
-        if let Some(session) = self.session.lock().expect("session").as_mut() {
-            session.key = key;
+        // A lock during the check clears grants under this mutex; a stale
+        // answer must not restore them.
+        let mut slot = self.session.lock().expect("session");
+        match slot.as_mut() {
+            Some(session) if self.epoch() == epoch => {
+                session.key = key;
+                self.grants.lock().expect("grants").insert(item_id.to_owned(), Instant::now());
+                Ok(())
+            }
+            _ => Err(IpcError::new(ErrorCode::Locked, "The vault is locked.")),
         }
-        self.grants.lock().expect("grants").insert(item_id.to_owned(), Instant::now());
-        Ok(())
     }
 
     /// Refuses access to an item that requires the master password unless
@@ -501,9 +545,7 @@ impl Daemon {
         if item["reprompt"].as_i64() != Some(1) {
             return Ok(());
         }
-        let granted =
-            self.grants.lock().expect("grants").get(id).is_some_and(|at| at.elapsed() < REPROMPT_GRANT);
-        if granted {
+        if self.has_grant(id) {
             Ok(())
         } else {
             Err(IpcError::new(ErrorCode::RepromptRequired, "Enter your master password to use this item."))

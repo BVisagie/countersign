@@ -284,6 +284,12 @@ impl Detail {
             ItemKind::SecureNote => {}
         }
 
+        if text(&item["notes"]).is_none() && has(&Field::Notes) {
+            // The item requires the master password; notes stay hidden.
+            let group = self.group("Notes");
+            group.append(&self.secret_field(id, "Notes", Field::Notes));
+            self.finish_group(group);
+        }
         if let Some(notes) = text(&item["notes"]) {
             let group = self.group("Notes");
             let body = label(&notes, &["cs-field-value"]);
@@ -308,7 +314,7 @@ impl Detail {
                 let name = text(&field["name"]).unwrap_or_else(|| "Field".into());
                 let reference = Field::Custom { index };
                 match field["type"].as_i64() {
-                    Some(1) if has(&reference) => group.append(&self.secret_field(id, &name, reference)),
+                    _ if has(&reference) => group.append(&self.secret_field(id, &name, reference)),
                     Some(2) => {
                         let on = field["value"].as_str() == Some("true");
                         group.append(&self.plain_field(id, &name, if on { "Yes" } else { "No" }, None));
@@ -440,14 +446,20 @@ impl Detail {
                         button.set_icon_name("view-conceal-symbolic");
                         shown.set(true);
                         let (value, button, shown) = (value.clone(), button.clone(), shown.clone());
-                        let source = glib::timeout_add_local_once(REVEAL_FOR, move || {
+                        // Not tracked in `timers`: a one-shot source is gone once
+                        // it fires, and removing it again would panic. The
+                        // generation check skips items no longer shown.
+                        let weak = Rc::downgrade(&me);
+                        glib::timeout_add_local_once(REVEAL_FOR, move || {
+                            if weak.upgrade().is_none_or(|me| me.generation.get() != generation) {
+                                return;
+                            }
                             value.set_label(MASK);
                             value.set_selectable(false);
                             value.add_css_class("secret");
                             button.set_icon_name("view-reveal-symbolic");
                             shown.set(false);
                         });
-                        me.timers.borrow_mut().push(source);
                     }
                     Ok(None) => {}
                     Err(e) => (me.notify)(&e.message),

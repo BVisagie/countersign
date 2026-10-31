@@ -81,7 +81,6 @@ pub enum Request {
     CopyValue {
         value: Secret,
         label: String,
-        secret: bool,
     },
     Totp {
         id: String,

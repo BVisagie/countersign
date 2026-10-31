@@ -6,7 +6,7 @@ use std::sync::Arc;
 use countersign_bw::{GenerateOptions as BwGenerate, SessionKey};
 use countersign_ipc::{
     ErrorCode, Field, GenerateOptions, IpcError, PROTOCOL_VERSION, Request, Response, Secret, TerminalLaunch,
-    TotpCode, VaultState, redact,
+    TotpCode, VaultState, redact, redact_protected,
 };
 use secrecy::{ExposeSecret, SecretString};
 use serde_json::Value;
@@ -118,10 +118,14 @@ impl Daemon {
                 }
                 Ok(Response::Vault { vault: self.vault() })
             }
+            // Showing an item is not activity: the app reloads items on its
+            // own after a sync.
             R::Item { id } => {
-                self.touch();
                 let item = self.client().await?.get_item(&id).await.map_err(ipc_error)?;
-                let (item, secret_fields) = redact(&item);
+                let (mut item, mut secret_fields) = redact(&item);
+                if item["reprompt"].as_i64() == Some(1) && !self.has_grant(&id) {
+                    redact_protected(&mut item, &mut secret_fields);
+                }
                 Ok(Response::Item { item, secret_fields })
             }
             R::Reveal { id, field } => {
@@ -146,11 +150,11 @@ impl Daemon {
                 self.skip_follow_up();
                 Ok(Response::Ok)
             }
-            R::CopyValue { value, label, secret } => {
-                self.copy_value(Zeroizing::new(value.expose().to_owned()), label, secret).await
+            R::CopyValue { value, label } => {
+                self.copy_value(Zeroizing::new(value.expose().to_owned()), label).await
             }
+            // Live codes refresh on a timer, so this is not activity either.
             R::Totp { id } => {
-                self.touch();
                 let client = self.client().await?;
                 let item = client.get_item(&id).await.map_err(ipc_error)?;
                 self.check_reprompt(&id, &item)?;

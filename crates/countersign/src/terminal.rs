@@ -46,7 +46,9 @@ pub fn login(app: &Rc<App>, parent: &gtk::Widget, launch: TerminalLaunch, _waiti
         home.as_deref(),
         &argv_ref,
         &envv_ref,
-        glib::SpawnFlags::DEFAULT,
+        // VTE adds `envv` to the app's own environment unless told not to;
+        // the CLI gets only the scrubbed environment from the daemon.
+        glib::SpawnFlags::from_bits_retain(VTE_SPAWN_NO_PARENT_ENVV),
         || {},
         -1,
         gtk::gio::Cancellable::NONE,
@@ -77,6 +79,11 @@ pub fn login(app: &Rc<App>, parent: &gtk::Widget, launch: TerminalLaunch, _waiti
     terminal.grab_focus();
 }
 
+/// VTE's flag for spawning without the parent environment
+/// (`VTE_SPAWN_NO_PARENT_ENVV`), which glib's flags do not name.
+#[cfg(feature = "terminal")]
+const VTE_SPAWN_NO_PARENT_ENVV: u32 = 1 << 25;
+
 #[cfg(feature = "terminal")]
 fn tracing_warn(message: &str) {
     eprintln!("countersign: {message}");
@@ -88,7 +95,8 @@ pub fn login(_app: &Rc<App>, _parent: &gtk::Widget, launch: TerminalLaunch, wait
 
     // Plain `bw login`: its session key would otherwise stay on screen.
     let mut command = std::process::Command::new("xdg-terminal-exec");
-    command.arg("env");
+    // `env -i` gives the CLI only the daemon's scrubbed environment.
+    command.arg("env").arg("-i");
     for (k, v) in &launch.env {
         command.arg(format!("{k}={v}"));
     }

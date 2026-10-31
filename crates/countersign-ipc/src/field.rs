@@ -165,6 +165,29 @@ pub fn redact(item: &Value) -> (Value, Vec<Field>) {
     (out, present)
 }
 
+/// Hides the rest of an item that requires the master password: its notes
+/// and custom text fields, which otherwise show in full. Call after
+/// [`redact`] until the password has been entered for the item.
+pub fn redact_protected(item: &mut Value, present: &mut Vec<Field>) {
+    if let Some(notes) = item.get_mut("notes")
+        && notes.as_str().is_some_and(|n| !n.is_empty())
+    {
+        *notes = Value::Null;
+        present.push(Field::Notes);
+    }
+    if let Some(fields) = item.get_mut("fields").and_then(Value::as_array_mut) {
+        for (index, field) in fields.iter_mut().enumerate() {
+            if field["type"].as_i64() == Some(0)
+                && let Some(value) = field.get_mut("value")
+                && value.as_str().is_some_and(|v| !v.is_empty())
+            {
+                *value = Value::Null;
+                present.push(Field::Custom { index });
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -214,6 +237,19 @@ mod tests {
         for secret in ["\"pw\"", "JBSWY3", "1234", "\"old\"", "private"] {
             assert!(!text.contains(secret), "{secret} leaked");
         }
+    }
+
+    #[test]
+    fn protected_items_hide_notes_and_text_fields() {
+        let mut item = login();
+        item["reprompt"] = json!(1);
+        let (mut out, mut present) = redact(&item);
+        redact_protected(&mut out, &mut present);
+        assert!(out["notes"].is_null());
+        assert!(out["fields"][0]["value"].is_null());
+        assert!(present.contains(&Field::Notes));
+        assert!(present.contains(&Field::Custom { index: 0 }));
+        assert!(!serde_json::to_string(&out).unwrap().contains("visible"));
     }
 
     #[test]

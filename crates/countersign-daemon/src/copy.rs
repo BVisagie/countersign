@@ -1,47 +1,57 @@
 //! Copying fields to the clipboard, clearing them, and replacing a copied
 //! password with the item's one-time code.
+//!
+//! Every copy is marked sensitive, so clipboard history skips it. Each copy
+//! records the lock epoch it started in; the clipboard refuses the value if
+//! a lock happened in between, even when the task that asked has since been
+//! cancelled.
 
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use countersign_ipc::{ClipboardEvent, ClipboardState, ErrorCode, Event, Field, IpcError, Response};
 use secrecy::ExposeSecret;
 use zeroize::Zeroizing;
 
+use crate::clipboard::Refused;
 use crate::core::{Daemon, ipc_error};
 
 impl Daemon {
     pub async fn copy_field(self: &Arc<Self>, id: &str, field: Field) -> Result<Response, IpcError> {
         self.touch();
+        let epoch = self.epoch();
         let client = self.client().await?;
         let item = client.get_item(id).await.map_err(ipc_error)?;
         self.check_reprompt(id, &item)?;
         let name = item["name"].as_str().unwrap_or_default().to_owned();
         let has_totp = Field::Totp.read(&item).is_some();
-        let (value, sensitive) = match &field {
+        let value = match &field {
             Field::Totp => {
-                let code = client.get_totp(id).await.map_err(ipc_error)?;
-                (Zeroizing::new(code.expose_secret().to_owned()), true)
+                Zeroizing::new(client.get_totp(id).await.map_err(ipc_error)?.expose_secret().to_owned())
             }
-            other => {
-                let value = other.read(&item).ok_or_else(|| {
-                    IpcError::new(
-                        ErrorCode::NotFound,
-                        format!("This item has no {}.", other.label().to_lowercase()),
-                    )
-                })?;
-                (Zeroizing::new(value), other.is_secret_kind(&item))
-            }
+            other => Zeroizing::new(other.read(&item).ok_or_else(|| {
+                IpcError::new(
+                    ErrorCode::NotFound,
+                    format!("This item has no {}.", other.label().to_lowercase()),
+                )
+            })?),
         };
         drop(item);
         let settings = self.settings();
         self.copy_timers.lock().expect("timers").cancel();
-        let generation = self.put(value, sensitive).await?;
+        let generation = self.put(value, epoch, None, settings.clipboard_clear_secs).await?;
         self.note_recent(id);
         let follow_up = field == Field::Password && has_totp && settings.totp_follow_up;
         self.schedule_clear(generation, settings.clipboard_clear_secs);
         if follow_up {
-            self.schedule_follow_up(generation, id.to_owned(), name.clone(), settings.totp_follow_up_secs);
+            self.schedule_follow_up(
+                generation,
+                epoch,
+                id.to_owned(),
+                name.clone(),
+                settings.totp_follow_up_secs,
+            );
         }
         self.emit_clipboard(ClipboardEvent {
             state: ClipboardState::Copied,
@@ -58,12 +68,12 @@ impl Daemon {
         self: &Arc<Self>,
         value: Zeroizing<String>,
         label: String,
-        secret: bool,
     ) -> Result<Response, IpcError> {
         self.touch();
+        let epoch = self.epoch();
         let settings = self.settings();
         self.copy_timers.lock().expect("timers").cancel();
-        let generation = self.put(value, secret).await?;
+        let generation = self.put(value, epoch, None, settings.clipboard_clear_secs).await?;
         self.schedule_clear(generation, settings.clipboard_clear_secs);
         self.emit_clipboard(ClipboardEvent {
             state: ClipboardState::Copied,
@@ -75,12 +85,31 @@ impl Daemon {
         Ok(Response::Ok)
     }
 
-    async fn put(&self, value: Zeroizing<String>, sensitive: bool) -> Result<u64, IpcError> {
+    /// Puts a value on the clipboard unless a lock happened since `epoch`.
+    /// With `replacing`, only while that generation is still ours.
+    async fn put(
+        &self,
+        value: Zeroizing<String>,
+        epoch: u64,
+        replacing: Option<u64>,
+        expires_secs: u32,
+    ) -> Result<u64, IpcError> {
         let clipboard = self.clipboard.clone();
-        tokio::task::spawn_blocking(move || clipboard.copy(value, sensitive))
+        let counter = self.epoch_counter();
+        let allow = move |current: Option<u64>| {
+            counter.load(Ordering::SeqCst) == epoch && replacing.is_none_or(|g| current == Some(g))
+        };
+        let expires = Duration::from_secs(u64::from(expires_secs));
+        let result = tokio::task::spawn_blocking(move || clipboard.copy(value, true, expires, allow))
             .await
-            .map_err(|e| IpcError::new(ErrorCode::Internal, e.to_string()))?
-            .map_err(|e| IpcError::new(ErrorCode::Internal, e.to_string()))
+            .map_err(|e| IpcError::new(ErrorCode::Internal, e.to_string()))?;
+        result.map_err(|e| {
+            if e.is::<Refused>() {
+                IpcError::new(ErrorCode::Locked, "The vault was locked before the copy finished.")
+            } else {
+                IpcError::new(ErrorCode::Internal, e.to_string())
+            }
+        })
     }
 
     fn schedule_clear(self: &Arc<Self>, generation: u64, after_secs: u32) {
@@ -106,12 +135,19 @@ impl Daemon {
         }
     }
 
-    fn schedule_follow_up(self: &Arc<Self>, generation: u64, id: String, name: String, after_secs: u32) {
+    fn schedule_follow_up(
+        self: &Arc<Self>,
+        generation: u64,
+        epoch: u64,
+        id: String,
+        name: String,
+        after_secs: u32,
+    ) {
         let me = self.clone();
         let task = tokio::spawn(async move {
             tokio::time::sleep(Duration::from_secs(u64::from(after_secs))).await;
             // Leave the clipboard alone if the password was replaced.
-            if !me.clipboard.is_current(generation) {
+            if !me.clipboard.is_current(generation) || me.epoch() != epoch {
                 return;
             }
             let code = async { me.client().await?.get_totp(&id).await.map_err(ipc_error) }.await;
@@ -128,14 +164,10 @@ impl Daemon {
                     return;
                 }
             };
-            if !me.clipboard.is_current(generation) {
-                return;
-            }
             let clear_secs = me.settings().clipboard_clear_secs;
-            if let Some(clear) = me.copy_timers.lock().expect("timers").clear.take() {
-                clear.abort();
-            }
-            match me.put(code, true).await {
+            // The clipboard replaces the password only if it is still ours
+            // and the vault is still open when the code takes over.
+            match me.put(code, epoch, Some(generation), clear_secs).await {
                 Ok(next) => {
                     me.schedule_clear(next, clear_secs);
                     me.emit_clipboard(ClipboardEvent {
@@ -146,6 +178,7 @@ impl Daemon {
                         follow_up_in: None,
                     });
                 }
+                Err(e) if e.code == ErrorCode::Locked => {}
                 Err(e) => tracing::warn!("copying the verification code failed: {e}"),
             }
         });

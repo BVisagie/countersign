@@ -194,6 +194,7 @@ impl Quick {
             self.search.connect_changed(move |_| {
                 if let Some(me) = weak.upgrade() {
                     me.refresh();
+                    me.app.activity();
                 }
             });
         }
@@ -253,6 +254,11 @@ impl Quick {
             glib::Propagation::Stop
         });
         self.window.add_controller(keys);
+        let clicks = gtk::GestureClick::new();
+        clicks.set_propagation_phase(gtk::PropagationPhase::Capture);
+        let app = self.app.clone();
+        clicks.connect_pressed(move |_, _, _, _| app.activity());
+        self.window.add_controller(clicks);
     }
 
     pub fn show(self: &Rc<Self>) {
