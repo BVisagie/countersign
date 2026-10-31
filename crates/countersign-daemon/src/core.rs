@@ -326,9 +326,8 @@ impl Daemon {
             VaultState::LoggedOut => return Err(IpcError::new(ErrorCode::LoggedOut, "Sign in first.")),
             _ => return Err(IpcError::new(ErrorCode::Busy, "Countersign is still starting.")),
         }
-        let epoch = self.epoch();
         let cli = self.cli()?;
-        self.update_status(|s| s.vault = VaultState::Unlocking);
+        let epoch = self.begin_unlocking();
         let serve = match self.take_prepared() {
             Some(serve) => serve,
             None => match Serve::start(&cli, None).await {
@@ -361,9 +360,8 @@ impl Daemon {
         if self.status().vault != VaultState::Locked {
             return Ok(());
         }
-        let epoch = self.epoch();
         let cli = self.cli()?;
-        self.update_status(|s| s.vault = VaultState::Unlocking);
+        let epoch = self.begin_unlocking();
         let client = match self.start_staged(&cli, &key, epoch).await {
             Ok(client) => client,
             Err(e) => {
@@ -405,6 +403,15 @@ impl Daemon {
         let client = serve.client().clone();
         *slot = Some(Session { serve, key });
         Ok(client)
+    }
+
+    /// Marks the vault as unlocking and returns the epoch of this attempt.
+    /// Runs under the session mutex, as `lock` does, so a lock either comes
+    /// first or settles this attempt; it can never leave it stuck.
+    fn begin_unlocking(&self) -> u64 {
+        let _slot = self.session.lock().expect("session");
+        self.update_status(|s| s.vault = VaultState::Unlocking);
+        self.epoch()
     }
 
     /// Puts a CLI that is about to be unlocked where `lock` can stop it.
@@ -754,5 +761,43 @@ pub(crate) fn ipc_error(error: BwError) -> IpcError {
         BwError::Cli(message) => IpcError::new(ErrorCode::Cli, message),
         BwError::Disconnected => IpcError::new(ErrorCode::Locked, "The vault is locked."),
         other => IpcError::new(ErrorCode::Internal, other.to_string()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn daemon() -> (Arc<Daemon>, tempfile::TempDir) {
+        let root = tempfile::tempdir().unwrap();
+        let paths = Paths {
+            settings_file: root.path().join("settings.toml"),
+            profile_dir: root.path().join("profile"),
+            managed_cli_root: root.path().join("cli"),
+            runtime_dir: root.path().join("run"),
+            socket: root.path().join("run/daemon.sock"),
+            lock_file: root.path().join("run/daemon.lock"),
+        };
+        (Daemon::new(paths, Settings::default()), root)
+    }
+
+    /// A lock during an unlock attempt settles it as locked, and the next
+    /// attempt can start: the attempt is never left in Unlocking.
+    #[tokio::test]
+    async fn lock_while_unlocking_settles_locked() {
+        let (daemon, _root) = daemon();
+        daemon.update_status(|s| s.vault = VaultState::Locked);
+        let epoch = daemon.begin_unlocking();
+        assert_eq!(daemon.status().vault, VaultState::Unlocking);
+        daemon.lock(LockReason::Requested).await;
+        assert_eq!(daemon.status().vault, VaultState::Locked);
+        // The stale attempt's cleanup leaves the lock's state alone.
+        daemon.settle_locked(epoch);
+        assert_eq!(daemon.status().vault, VaultState::Locked);
+        assert_ne!(daemon.begin_unlocking(), epoch);
+        assert_eq!(daemon.status().vault, VaultState::Unlocking);
+        // A failed attempt in the current epoch settles back to Locked.
+        daemon.settle_locked(daemon.epoch());
+        assert_eq!(daemon.status().vault, VaultState::Locked);
     }
 }
