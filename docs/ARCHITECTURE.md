@@ -1,0 +1,80 @@
+# Architecture
+
+```text
+Hyprland key / tray / `countersign --quick`
+            │
+            ▼
+  countersign (GTK app)  main window · quick access · theme
+            │   private Unix socket, same user only, one JSON object per line
+            ▼
+  countersignd (daemon)  session · vault index · clipboard · locks
+            │   socket pair (fd+connected://), HTTP/1.1
+            ▼
+  bw serve (official Bitwarden CLI)  encryption · sync · server API
+```
+
+## The CLI adapter
+
+`countersign-bw` runs one-off commands (`--version`, `status`, `config
+server`, `login --apikey`, `logout`, `lock`) with a scrubbed environment,
+bounded output and timeouts. Only proxy and certificate variables pass
+through; `LD_PRELOAD`, `NODE_OPTIONS` and everything else are dropped.
+
+For vault work it starts `bw serve --hostname fd+connected://N` with the
+other end of a socket pair. The CLI serves exactly one connection, which
+only the daemon holds, and exits when it closes. `bw serve` checks the Host
+header against its configured hostname and port, so every request sends
+`Host: localhost:8087`. One-off commands cost two to three seconds each; a
+request to the running server costs milliseconds.
+
+The CLI refuses to serve until an account is logged in, and has no login
+route, so sign-in uses `bw login` itself.
+
+## The daemon
+
+`countersignd` starts on demand from the app, holds a lock so only one runs
+per user, and exits once no app is connected, the vault is locked and none of
+its values remain on the clipboard.
+
+- **Unlocking.** The unlock screen asks the daemon to start the CLI while you
+  type. Unlock posts the password to `/unlock`, keeps the session key the CLI
+  returns, then builds a metadata index from `/list/object/items` and syncs
+  in the background.
+- **The index.** Summaries hold names, usernames, hosts, flags, folders and
+  card brand with the last four digits. Passwords, codes, card numbers and
+  notes are never in it.
+- **Recovery.** If the CLI stops while unlocked, the next request restarts
+  it with the session key, which reopens the vault without the password.
+- **Locking** never waits behind other work. It takes the session out first,
+  bumps an epoch so in-flight unlocks, syncs and rebuilds discard their
+  results, asks the CLI to lock, stops it and clears our clipboard value.
+- **Re-prompt.** Items that require the master password refuse reveal, copy
+  and edit until it is entered. The daemon checks it with `/unlock`, which
+  rotates the CLI's session key, and adopts the new key.
+- **Clipboard.** `wl-clipboard-rs` serves each copy from its own thread
+  inside the daemon, with the `x-kde-passwordManagerHint` type that tells
+  clipboard history, including Omarchy's, to skip it. A timer clears it only
+  if it is still Countersign's value.
+- **Triggers.** An inactivity timer; Hyprland's session lock, read from its
+  IPC socket every 500 ms while unlocked; logind's `Lock` signal for the
+  display session; and a logind sleep delay inhibitor held only while
+  unlocked, released after locking.
+
+## The app
+
+`countersign` is a single-instance GTK application that stays running in the
+background, so quick access is a window that is already built. A second
+`countersign --quick` hands its command line to the running instance.
+
+The app talks to the daemon with GIO's asynchronous socket API on the main
+loop, so it has no threads of its own. Search ranks the index in the app with
+nucleo's fuzzy matcher. Lists are `GtkListView`s, which create rows only for
+what is visible.
+
+The theme reads `colors.toml` from the active Omarchy theme, maps it onto
+libadwaita's color variables, matches Hyprland's `decoration:rounding`, and
+reloads when the theme folder changes. Without Omarchy, libadwaita's own look
+remains.
+
+`COUNTERSIGN_DEMO=1` swaps the daemon for a fictional in-process vault, which
+the screenshot script and UI work use.
