@@ -112,10 +112,8 @@ pub fn summarize(item: &Value) -> Option<ItemSummary> {
         ItemKind::SshKey => text(&item["sshKey"]["keyFingerprint"]),
         ItemKind::SecureNote => None,
     };
-    let collection_ids = item["collectionIds"]
-        .as_array()
-        .map(|c| c.iter().filter_map(&text).collect())
-        .unwrap_or_default();
+    let collection_ids =
+        item["collectionIds"].as_array().map(|c| c.iter().filter_map(&text).collect()).unwrap_or_default();
     Some(ItemSummary {
         id,
         kind,

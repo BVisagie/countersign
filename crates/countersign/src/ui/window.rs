@@ -1,0 +1,829 @@
+//! The main window: sidebar, item list and details, plus the setup,
+//! sign-in and unlock pages.
+
+use std::cell::RefCell;
+use std::rc::Rc;
+use std::time::Duration;
+
+use adw::prelude::*;
+use countersign_ipc::{
+    CliState, ClipboardEvent, ClipboardState, Field, ItemKind, ItemSummary, Request, Status, VaultSnapshot,
+    VaultState,
+};
+use gtk::{gdk, gio, glib};
+
+use super::detail::{Detail, launchable};
+use super::gates::{Setup, SignIn, Unlock, confirm_sign_out, server_name};
+use super::items::ItemList;
+use super::{kind_icon, kind_plural, label, relative_time};
+use crate::app::{App, View};
+use crate::search::Searcher;
+
+thread_local! {
+    static WINDOW: RefCell<Option<Rc<MainWindow>>> = const { RefCell::new(None) };
+}
+
+/// Shows the main window, creating it the first time.
+pub fn present(app: &Rc<App>) {
+    get_or_create(app).window.present();
+}
+
+/// The main window, created hidden if it does not exist yet.
+pub fn get_or_create(app: &Rc<App>) -> Rc<MainWindow> {
+    WINDOW.with(|w| w.borrow().clone()).unwrap_or_else(|| {
+        let window = MainWindow::new(app);
+        WINDOW.with(|w| *w.borrow_mut() = Some(window.clone()));
+        window
+    })
+}
+
+pub fn current() -> Option<Rc<MainWindow>> {
+    WINDOW.with(|w| w.borrow().clone())
+}
+
+/// Shows a short message in the main window, if it exists.
+pub fn toast(message: &str) {
+    if let Some(window) = current() {
+        window.toast(message);
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum Filter {
+    All,
+    Favorites,
+    Kind(ItemKind),
+    Folder(Option<String>),
+    Collection(String),
+    Trash,
+}
+
+impl Filter {
+    fn matches(&self, item: &ItemSummary) -> bool {
+        match self {
+            Filter::All | Filter::Trash => true,
+            Filter::Favorites => item.favorite,
+            Filter::Kind(kind) => item.kind == *kind,
+            Filter::Folder(folder) => item.folder_id == *folder,
+            Filter::Collection(id) => item.collection_ids.contains(id),
+        }
+    }
+}
+
+/// The field Enter copies for an item.
+pub fn primary_field(item: &ItemSummary) -> Option<Field> {
+    match item.kind {
+        ItemKind::Login if item.has_password => Some(Field::Password),
+        ItemKind::Login if item.username.is_some() => Some(Field::Username),
+        ItemKind::Login => None,
+        ItemKind::Card => Some(Field::CardNumber),
+        ItemKind::SecureNote => Some(Field::Notes),
+        ItemKind::SshKey => Some(Field::SshPublicKey),
+        ItemKind::Identity => None,
+    }
+}
+
+/// Shows what was copied and when it will be cleared.
+pub struct Receipt {
+    pub root: gtk::Revealer,
+    title: gtk::Label,
+    detail: gtk::Label,
+    progress: gtk::ProgressBar,
+    skip: gtk::Button,
+    timer: RefCell<Option<glib::SourceId>>,
+}
+
+impl Receipt {
+    pub fn new(app: &Rc<App>) -> Rc<Self> {
+        let title = label("", &["cs-receipt-title"]);
+        let detail = label("", &["cs-receipt-detail"]);
+        detail.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        let text = gtk::Box::new(gtk::Orientation::Vertical, 1);
+        text.set_hexpand(true);
+        text.append(&title);
+        text.append(&detail);
+        let skip = gtk::Button::builder().label("Keep password").css_classes(["flat"]).visible(false).build();
+        skip.set_valign(gtk::Align::Center);
+        let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        let icon = gtk::Image::from_icon_name("edit-copy-symbolic");
+        icon.add_css_class("cs-badge");
+        row.append(&icon);
+        row.append(&text);
+        row.append(&skip);
+        let progress = gtk::ProgressBar::new();
+        progress.set_margin_top(6);
+        let column = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        column.add_css_class("cs-receipt");
+        column.append(&row);
+        column.append(&progress);
+        let root = gtk::Revealer::builder()
+            .transition_type(gtk::RevealerTransitionType::SlideUp)
+            .child(&column)
+            .reveal_child(false)
+            .build();
+        let receipt = Rc::new(Receipt { root, title, detail, progress, skip, timer: RefCell::default() });
+        {
+            let (app, me) = (app.clone(), Rc::downgrade(&receipt));
+            receipt.skip.connect_clicked(move |button| {
+                app.fire(Request::SkipFollowUp);
+                button.set_visible(false);
+                if let Some(me) = me.upgrade() {
+                    me.detail.set_label("Keeping the password");
+                }
+            });
+        }
+        receipt
+    }
+
+    fn stop(&self) {
+        if let Some(source) = self.timer.borrow_mut().take() {
+            source.remove();
+        }
+    }
+
+    pub fn show(self: &Rc<Self>, event: &ClipboardEvent) {
+        self.stop();
+        self.root.set_reveal_child(true);
+        self.title.set_label(&event.label);
+        self.title.remove_css_class("cs-error");
+        match event.state {
+            ClipboardState::Copied | ClipboardState::FollowUpCopied => {
+                let total = event.clears_in.unwrap_or(30).max(1);
+                let item = event.item_name.clone();
+                let follow = event.follow_up_in;
+                self.skip.set_visible(follow.is_some());
+                let start = std::time::Instant::now();
+                let me = Rc::downgrade(self);
+                let tick = move || {
+                    let Some(me) = me.upgrade() else { return glib::ControlFlow::Break };
+                    let elapsed = start.elapsed().as_secs_f64();
+                    let left = (f64::from(total) - elapsed).max(0.0);
+                    me.progress.set_fraction(left / f64::from(total));
+                    let mut parts = Vec::new();
+                    if let Some(item) = &item {
+                        parts.push(item.clone());
+                    }
+                    if let Some(follow) = follow {
+                        let code_in = (f64::from(follow) - elapsed).ceil();
+                        if code_in > 0.0 && me.skip.is_visible() {
+                            parts.push(format!("code replaces it in {code_in:.0}s"));
+                        }
+                    }
+                    parts.push(format!("clears in {:.0}s", left.ceil()));
+                    me.detail.set_label(&parts.join(" · "));
+                    if left <= 0.0 {
+                        me.timer.borrow_mut().take();
+                        return glib::ControlFlow::Break;
+                    }
+                    glib::ControlFlow::Continue
+                };
+                tick();
+                let source = glib::timeout_add_local(Duration::from_millis(250), tick);
+                *self.timer.borrow_mut() = Some(source);
+            }
+            ClipboardState::Cleared => {
+                self.skip.set_visible(false);
+                self.progress.set_fraction(0.0);
+                self.detail.set_label("Nothing of yours is left on the clipboard");
+                self.hide_after(Duration::from_secs(2));
+            }
+            ClipboardState::Failed => {
+                self.skip.set_visible(false);
+                self.title.add_css_class("cs-error");
+                self.detail.set_label(event.item_name.as_deref().unwrap_or(""));
+                self.hide_after(Duration::from_secs(5));
+            }
+        }
+    }
+
+    fn hide_after(self: &Rc<Self>, delay: Duration) {
+        let me = Rc::downgrade(self);
+        let source = glib::timeout_add_local_once(delay, move || {
+            if let Some(me) = me.upgrade() {
+                me.timer.borrow_mut().take();
+                me.root.set_reveal_child(false);
+            }
+        });
+        *self.timer.borrow_mut() = Some(source);
+    }
+}
+
+pub struct MainWindow {
+    pub window: adw::ApplicationWindow,
+    app: Rc<App>,
+    stack: gtk::Stack,
+    toasts: adw::ToastOverlay,
+    unlock: Rc<Unlock>,
+    sign_in: Rc<SignIn>,
+    setup: Rc<Setup>,
+    sidebar: gtk::ListBox,
+    filters: RefCell<Vec<Filter>>,
+    filter: RefCell<Filter>,
+    pub search: gtk::SearchEntry,
+    pub list: ItemList,
+    list_stack: gtk::Stack,
+    list_meta: gtk::Label,
+    empty: adw::StatusPage,
+    pub detail: Rc<Detail>,
+    detail_page: adw::NavigationPage,
+    pub nav: adw::NavigationSplitView,
+    pub split: adw::OverlaySplitView,
+    items: RefCell<Vec<Rc<ItemSummary>>>,
+    trash: RefCell<Vec<Rc<ItemSummary>>>,
+    searcher: RefCell<Searcher>,
+    account_email: gtk::Label,
+    account_server: gtk::Label,
+    dot: gtk::Box,
+    sync_label: gtk::Label,
+    receipt: Rc<Receipt>,
+}
+
+impl MainWindow {
+    fn new(app: &Rc<App>) -> Rc<Self> {
+        let window = adw::ApplicationWindow::builder()
+            .application(&app.gtk)
+            .title("Countersign")
+            .default_width(1180)
+            .default_height(760)
+            .width_request(360)
+            .height_request(420)
+            .build();
+
+        // Sidebar.
+        let sidebar = gtk::ListBox::new();
+        sidebar.add_css_class("cs-nav");
+        sidebar.set_selection_mode(gtk::SelectionMode::Single);
+        let sidebar_scroll = gtk::ScrolledWindow::builder()
+            .hscrollbar_policy(gtk::PolicyType::Never)
+            .vexpand(true)
+            .child(&sidebar)
+            .build();
+        let brand = label("COUNTERSIGN", &["cs-brand"]);
+        let sidebar_header = adw::HeaderBar::builder()
+            .title_widget(&brand)
+            .show_end_title_buttons(false)
+            .show_start_title_buttons(false)
+            .build();
+        let dot = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        dot.add_css_class("cs-dot");
+        dot.set_valign(gtk::Align::Center);
+        let account_email = label("", &["cs-account-email"]);
+        account_email.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        let account_server = label("", &["cs-account-server"]);
+        let sync_label = label("", &["cs-account-server"]);
+        let account_text = gtk::Box::new(gtk::Orientation::Vertical, 1);
+        account_text.set_hexpand(true);
+        account_text.append(&account_email);
+        account_text.append(&account_server);
+        account_text.append(&sync_label);
+        let lock_button = super::icon_button("system-lock-screen-symbolic", "Lock (Ctrl+L)");
+        lock_button.set_action_name(Some("win.lock"));
+        let account = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+        account.add_css_class("cs-account");
+        account.append(&dot);
+        account.append(&account_text);
+        account.append(&lock_button);
+        let sidebar_view = adw::ToolbarView::new();
+        sidebar_view.add_top_bar(&sidebar_header);
+        sidebar_view.set_content(Some(&sidebar_scroll));
+        sidebar_view.add_bottom_bar(&account);
+        sidebar_view.add_css_class("cs-sidebar");
+
+        // Item list.
+        let search = gtk::SearchEntry::builder().placeholder_text("Search vault").hexpand(true).build();
+        search.add_css_class("cs-search");
+        search.update_property(&[gtk::accessible::Property::Label("Search vault")]);
+        let sidebar_toggle = gtk::ToggleButton::builder()
+            .icon_name("sidebar-show-symbolic")
+            .tooltip_text("Show sidebar")
+            .css_classes(["flat"])
+            .visible(false)
+            .build();
+        let menu = gio::Menu::new();
+        let section = gio::Menu::new();
+        section.append(Some("Quick access"), Some("app.quick"));
+        section.append(Some("Sync now"), Some("win.sync"));
+        menu.append_section(None, &section);
+        let section = gio::Menu::new();
+        section.append(Some("Lock"), Some("win.lock"));
+        section.append(Some("Sign out…"), Some("win.sign-out"));
+        menu.append_section(None, &section);
+        let menu_button = gtk::MenuButton::builder()
+            .icon_name("open-menu-symbolic")
+            .menu_model(&menu)
+            .tooltip_text("Menu")
+            .primary(true)
+            .build();
+        let list_header =
+            adw::HeaderBar::builder().title_widget(&search).show_end_title_buttons(false).build();
+        list_header.pack_start(&sidebar_toggle);
+        list_header.pack_end(&menu_button);
+        let list = ItemList::new(false);
+        let list_scroll = gtk::ScrolledWindow::builder()
+            .hscrollbar_policy(gtk::PolicyType::Never)
+            .vexpand(true)
+            .child(&list.view)
+            .build();
+        let list_meta = label("", &["cs-list-meta"]);
+        let list_column = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        list_column.append(&list_meta);
+        list_column.append(&list_scroll);
+        let empty = adw::StatusPage::builder().icon_name("edit-find-symbolic").title("No matches").build();
+        empty.add_css_class("compact");
+        let list_stack = gtk::Stack::new();
+        list_stack.add_named(&list_column, Some("list"));
+        list_stack.add_named(&empty, Some("empty"));
+        let receipt = Receipt::new(app);
+        let list_view = adw::ToolbarView::new();
+        list_view.add_top_bar(&list_header);
+        list_view.set_content(Some(&list_stack));
+        list_view.add_bottom_bar(&receipt.root);
+        let list_page = adw::NavigationPage::builder().title("Items").child(&list_view).build();
+
+        // Details.
+        let toasts = adw::ToastOverlay::new();
+        let notify: Rc<dyn Fn(&str)> = {
+            let toasts = toasts.clone();
+            Rc::new(move |message: &str| toasts.add_toast(adw::Toast::new(message)))
+        };
+        let detail = Detail::new(app, notify);
+        let detail_header = adw::HeaderBar::builder().show_title(false).build();
+        let detail_view = adw::ToolbarView::new();
+        detail_view.add_top_bar(&detail_header);
+        detail_view.set_content(Some(&detail.root));
+        let detail_page = adw::NavigationPage::builder().title("Details").child(&detail_view).build();
+
+        let nav = adw::NavigationSplitView::builder()
+            .sidebar(&list_page)
+            .content(&detail_page)
+            .min_sidebar_width(300.0)
+            .max_sidebar_width(400.0)
+            .sidebar_width_fraction(0.4)
+            .build();
+        let split = adw::OverlaySplitView::builder()
+            .sidebar(&sidebar_view)
+            .content(&nav)
+            .min_sidebar_width(210.0)
+            .max_sidebar_width(250.0)
+            .build();
+        sidebar_toggle.bind_property("active", &split, "show-sidebar").bidirectional().build();
+        split.bind_property("collapsed", &sidebar_toggle, "visible").sync_create().build();
+
+        let wide =
+            adw::Breakpoint::new(adw::BreakpointCondition::parse("max-width: 980sp").expect("condition"));
+        wide.add_setter(&split, "collapsed", Some(&true.to_value()));
+        window.add_breakpoint(wide);
+        let narrow =
+            adw::Breakpoint::new(adw::BreakpointCondition::parse("max-width: 620sp").expect("condition"));
+        narrow.add_setter(&split, "collapsed", Some(&true.to_value()));
+        narrow.add_setter(&nav, "collapsed", Some(&true.to_value()));
+        window.add_breakpoint(narrow);
+
+        // Pages.
+        let unlock = Unlock::new(app, false);
+        let sign_in = SignIn::new(app);
+        let setup = Setup::new(app);
+        let loading = gtk::Box::new(gtk::Orientation::Vertical, 12);
+        loading.set_valign(gtk::Align::Center);
+        loading.set_halign(gtk::Align::Center);
+        let spinner = adw::Spinner::new();
+        spinner.set_size_request(32, 32);
+        loading.append(&spinner);
+        let stack = gtk::Stack::builder().transition_type(gtk::StackTransitionType::Crossfade).build();
+        let gate = |child: &gtk::Widget| {
+            let view = adw::ToolbarView::new();
+            view.add_top_bar(&adw::HeaderBar::builder().show_title(false).build());
+            view.set_content(Some(child));
+            view
+        };
+        stack.add_named(&gate(loading.upcast_ref()), Some("loading"));
+        stack.add_named(&gate(&setup.root), Some("setup"));
+        stack.add_named(&gate(&sign_in.root), Some("signin"));
+        stack.add_named(&gate(&unlock.root), Some("locked"));
+        stack.add_named(&split, Some("vault"));
+        stack.add_css_class("cs-root");
+        toasts.set_child(Some(&stack));
+        window.set_content(Some(&toasts));
+
+        let me = Rc::new(MainWindow {
+            window,
+            app: app.clone(),
+            stack,
+            toasts,
+            unlock,
+            sign_in,
+            setup,
+            sidebar,
+            filters: RefCell::default(),
+            filter: RefCell::new(Filter::All),
+            search,
+            list,
+            list_stack,
+            list_meta,
+            empty,
+            detail,
+            detail_page,
+            nav,
+            split,
+            items: RefCell::default(),
+            trash: RefCell::default(),
+            searcher: RefCell::default(),
+            account_email,
+            account_server,
+            dot,
+            sync_label,
+            receipt,
+        });
+        me.connect();
+        app.add_view(Rc::downgrade(&(me.clone() as Rc<dyn View>)));
+        me.status_changed(&app.status.borrow().clone());
+        let vault = app.vault.borrow().clone();
+        me.vault_changed(&vault);
+        me
+    }
+
+    pub fn toast(&self, message: &str) {
+        self.toasts.add_toast(adw::Toast::new(message));
+    }
+
+    fn connect(self: &Rc<Self>) {
+        let weak = Rc::downgrade(self);
+        let action = |name: &str, run: fn(&Rc<MainWindow>)| {
+            let weak = weak.clone();
+            let action = gio::SimpleAction::new(name, None);
+            action.connect_activate(move |_, _| {
+                if let Some(me) = weak.upgrade() {
+                    run(&me);
+                }
+            });
+            self.window.add_action(&action);
+        };
+        action("lock", |me| me.app.fire(Request::Lock));
+        action("sync", |me| {
+            let app = me.app.clone();
+            let me = me.clone();
+            glib::spawn_future_local(async move {
+                match app.request(Request::Sync).await {
+                    Ok(_) => me.toast("Vault synced"),
+                    Err(e) => me.toast(&e.message),
+                }
+            });
+        });
+        action("sign-out", |me| confirm_sign_out(&me.app, me.window.upcast_ref()));
+        action("focus-search", |me| {
+            me.search.grab_focus();
+            me.search.select_region(0, -1);
+        });
+        self.app.gtk.set_accels_for_action("win.lock", &["<Control>l"]);
+        self.app.gtk.set_accels_for_action("win.sync", &["<Control>r"]);
+        self.app.gtk.set_accels_for_action("win.focus-search", &["<Control>f"]);
+
+        {
+            let weak = weak.clone();
+            self.sidebar.connect_row_selected(move |_, row| {
+                let (Some(me), Some(row)) = (weak.upgrade(), row) else { return };
+                let filter = me.filters.borrow().get(row.index() as usize).cloned();
+                if let Some(filter) = filter {
+                    *me.filter.borrow_mut() = filter;
+                    me.refresh_list();
+                    if me.split.is_collapsed() {
+                        me.split.set_show_sidebar(false);
+                    }
+                }
+            });
+        }
+        {
+            let weak = weak.clone();
+            self.search.connect_search_changed(move |_| {
+                if let Some(me) = weak.upgrade() {
+                    me.refresh_list();
+                    me.app.activity();
+                }
+            });
+        }
+        {
+            let weak = weak.clone();
+            self.search.connect_activate(move |_| {
+                if let Some(me) = weak.upgrade() {
+                    me.copy_primary();
+                }
+            });
+        }
+        {
+            let weak = weak.clone();
+            self.search.connect_stop_search(move |entry| {
+                if entry.text().is_empty() {
+                    if let Some(me) = weak.upgrade() {
+                        me.list.view.grab_focus();
+                    }
+                } else {
+                    entry.set_text("");
+                }
+            });
+        }
+        {
+            let weak = weak.clone();
+            self.list.selection.connect_selected_item_notify(move |_| {
+                let Some(me) = weak.upgrade() else { return };
+                let selected = me.list.selected();
+                me.detail.show(selected.as_ref().map(|i| i.id.as_str()));
+                if let Some(item) = selected {
+                    me.detail_page.set_title(&item.name);
+                }
+            });
+        }
+        {
+            let weak = weak.clone();
+            self.list.view.connect_activate(move |_, _| {
+                let Some(me) = weak.upgrade() else { return };
+                if me.nav.is_collapsed() {
+                    me.nav.set_show_content(true);
+                } else {
+                    me.copy_primary();
+                }
+            });
+        }
+        self.search.set_key_capture_widget(Some(&self.list.view));
+
+        // Arrows in the search field move through the list; Ctrl shortcuts
+        // copy fields of the selected item.
+        let keys = gtk::EventControllerKey::new();
+        keys.set_propagation_phase(gtk::PropagationPhase::Capture);
+        {
+            let weak = weak.clone();
+            keys.connect_key_pressed(move |_, key, _, state| {
+                let Some(me) = weak.upgrade() else { return glib::Propagation::Proceed };
+                if me.stack.visible_child_name().as_deref() != Some("vault") {
+                    return glib::Propagation::Proceed;
+                }
+                me.app.activity();
+                let ctrl = state.contains(gdk::ModifierType::CONTROL_MASK);
+                let in_search = me.search.has_focus() || me.search.focus_child().is_some();
+                match key {
+                    gdk::Key::Down | gdk::Key::Up if in_search && !ctrl => {
+                        me.list.step(if key == gdk::Key::Down { 1 } else { -1 });
+                        glib::Propagation::Stop
+                    }
+                    gdk::Key::Page_Down | gdk::Key::Page_Up if in_search => {
+                        me.list.step(if key == gdk::Key::Page_Down { 10 } else { -10 });
+                        glib::Propagation::Stop
+                    }
+                    gdk::Key::slash if !in_search && !focus_in_editable(&me.window) => {
+                        me.search.grab_focus();
+                        glib::Propagation::Stop
+                    }
+                    gdk::Key::c | gdk::Key::C if ctrl && !has_text_selection(&me.window) => {
+                        me.copy_selected(Field::Password)
+                    }
+                    gdk::Key::b | gdk::Key::B if ctrl => me.copy_selected(Field::Username),
+                    gdk::Key::t | gdk::Key::T if ctrl => me.copy_selected(Field::Totp),
+                    gdk::Key::u | gdk::Key::U if ctrl => {
+                        me.open_selected();
+                        glib::Propagation::Stop
+                    }
+                    _ => glib::Propagation::Proceed,
+                }
+            });
+        }
+        self.window.add_controller(keys);
+
+        {
+            let app = self.app.clone();
+            self.window.connect_close_request(move |window| {
+                if app.settings.borrow().close_to_background {
+                    window.set_visible(false);
+                    glib::Propagation::Stop
+                } else {
+                    app.gtk.quit();
+                    glib::Propagation::Proceed
+                }
+            });
+        }
+    }
+
+    fn copy_selected(self: &Rc<Self>, field: Field) -> glib::Propagation {
+        let Some(item) = self.list.selected() else { return glib::Propagation::Proceed };
+        let field = match (&field, item.kind) {
+            (Field::Password, ItemKind::Card) => Field::CardNumber,
+            (Field::Username, ItemKind::Card) => Field::CardholderName,
+            (Field::Totp, ItemKind::Card) => Field::CardCode,
+            _ => field,
+        };
+        self.copy(&item.id, field);
+        glib::Propagation::Stop
+    }
+
+    fn copy_primary(self: &Rc<Self>) {
+        let Some(item) = self.list.selected() else { return };
+        match primary_field(&item) {
+            Some(field) => self.copy(&item.id, field),
+            None => {
+                if self.nav.is_collapsed() {
+                    self.nav.set_show_content(true);
+                }
+            }
+        }
+    }
+
+    fn copy(self: &Rc<Self>, id: &str, field: Field) {
+        let (me, id) = (self.clone(), id.to_owned());
+        glib::spawn_future_local(async move {
+            if let Err(e) = me.app.copy(me.window.upcast_ref(), &id, field).await {
+                me.toast(&e.message);
+            }
+        });
+    }
+
+    fn open_selected(&self) {
+        let Some(target) =
+            self.list.selected().and_then(|i| i.first_uri.clone()).and_then(|u| launchable(&u))
+        else {
+            return;
+        };
+        gtk::UriLauncher::new(&target).launch(Some(&self.window), gio::Cancellable::NONE, |_| {});
+    }
+
+    fn rebuild_sidebar(&self, vault: &VaultSnapshot) {
+        let selected = self.filter.borrow().clone();
+        while let Some(row) = self.sidebar.row_at_index(0) {
+            self.sidebar.remove(&row);
+        }
+        let mut filters = Vec::new();
+        let items = &vault.items;
+        let count = |f: &Filter| items.iter().filter(|i| f.matches(i)).count();
+        let add_row =
+            |filters: &mut Vec<Filter>, filter: Filter, icon: &str, text: &str, count: Option<usize>| {
+                let row = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+                let image = gtk::Image::from_icon_name(icon);
+                image.add_css_class("cs-nav-icon");
+                row.append(&image);
+                let name = label(text, &[]);
+                name.set_hexpand(true);
+                name.set_ellipsize(gtk::pango::EllipsizeMode::End);
+                row.append(&name);
+                if let Some(count) = count {
+                    row.append(&label(&count.to_string(), &["cs-count"]));
+                }
+                self.sidebar.append(&row);
+                filters.push(filter);
+            };
+        let add_title = |text: &str| {
+            let title = label(text, &["cs-section-title"]);
+            let row = gtk::ListBoxRow::builder().child(&title).selectable(false).activatable(false).build();
+            self.sidebar.append(&row);
+        };
+        add_row(&mut filters, Filter::All, "view-grid-symbolic", "All items", Some(items.len()));
+        add_row(
+            &mut filters,
+            Filter::Favorites,
+            "starred-symbolic",
+            "Favorites",
+            Some(count(&Filter::Favorites)),
+        );
+        for kind in
+            [ItemKind::Login, ItemKind::Card, ItemKind::Identity, ItemKind::SecureNote, ItemKind::SshKey]
+        {
+            let n = count(&Filter::Kind(kind));
+            if n > 0 || kind == ItemKind::Login {
+                add_row(&mut filters, Filter::Kind(kind), kind_icon(kind), kind_plural(kind), Some(n));
+            }
+        }
+        // Titles occupy rows too; keep the filter list aligned with indices.
+        let push_title = |filters: &mut Vec<Filter>, text: &str| {
+            add_title(text);
+            filters.push(Filter::All);
+        };
+        if !vault.folders.is_empty() {
+            push_title(&mut filters, "FOLDERS");
+            for folder in &vault.folders {
+                let f = Filter::Folder(Some(folder.id.clone()));
+                let n = count(&f);
+                add_row(&mut filters, f, "folder-symbolic", &folder.name, Some(n));
+            }
+            let none = Filter::Folder(None);
+            let n = count(&none);
+            if n > 0 {
+                add_row(&mut filters, none, "folder-symbolic", "No folder", Some(n));
+            }
+        }
+        if !vault.collections.is_empty() {
+            push_title(&mut filters, "COLLECTIONS");
+            for collection in &vault.collections {
+                let f = Filter::Collection(collection.id.clone());
+                let n = count(&f);
+                add_row(&mut filters, f, "user-bookmarks-symbolic", &collection.name, Some(n));
+            }
+        }
+        push_title(&mut filters, "");
+        add_row(&mut filters, Filter::Trash, "user-trash-symbolic", "Trash", Some(vault.trash.len()));
+        *self.filters.borrow_mut() = filters;
+        let index = self.filters.borrow().iter().position(|f| *f == selected).unwrap_or(0);
+        if let Some(row) = self.sidebar.row_at_index(index as i32) {
+            self.sidebar.select_row(Some(&row));
+        }
+    }
+
+    fn refresh_list(&self) {
+        let filter = self.filter.borrow().clone();
+        let query = self.search.text();
+        let recent = self.app.vault.borrow().recent.clone();
+        let (shown, total) = {
+            let source = if filter == Filter::Trash { self.trash.borrow() } else { self.items.borrow() };
+            let candidates: Vec<&Rc<ItemSummary>> = source.iter().filter(|i| filter.matches(i)).collect();
+            let refs: Vec<&ItemSummary> = candidates.iter().map(|r| r.as_ref()).collect();
+            let order =
+                self.searcher.borrow_mut().rank(&refs, &query, if query.is_empty() { &[] } else { &recent });
+            let shown: Vec<Rc<ItemSummary>> = order.iter().map(|&i| candidates[i].clone()).collect();
+            (shown, candidates.len())
+        };
+        self.list.set_items(&shown);
+        self.list_meta.set_label(&if query.is_empty() {
+            format!("{total} {}", if total == 1 { "item" } else { "items" })
+        } else {
+            format!("{} of {total} match “{}”", shown.len(), query.trim())
+        });
+        if shown.is_empty() {
+            self.empty.set_title(if query.is_empty() { "Nothing here yet" } else { "No matches" });
+            self.empty.set_description(Some(if query.is_empty() {
+                "Items you add in this category appear here."
+            } else {
+                "Try fewer letters, or search all items."
+            }));
+            self.list_stack.set_visible_child_name("empty");
+            self.detail.show(None);
+        } else {
+            self.list_stack.set_visible_child_name("list");
+            if let Some(item) = self.list.selected() {
+                self.detail.show(Some(&item.id));
+                self.detail_page.set_title(&item.name);
+            }
+        }
+    }
+}
+
+fn focus_in_editable(window: &adw::ApplicationWindow) -> bool {
+    gtk::prelude::GtkWindowExt::focus(window).is_some_and(|w| w.is::<gtk::Text>() || w.is::<gtk::Entry>())
+}
+
+fn has_text_selection(window: &adw::ApplicationWindow) -> bool {
+    let Some(focus) = gtk::prelude::GtkWindowExt::focus(window) else { return false };
+    if let Some(editable) = focus.dynamic_cast_ref::<gtk::Editable>() {
+        return editable.selection_bounds().is_some();
+    }
+    if let Some(label) = focus.dynamic_cast_ref::<gtk::Label>() {
+        return label.selection_bounds().is_some();
+    }
+    false
+}
+
+impl View for MainWindow {
+    fn status_changed(&self, status: &Status) {
+        let page = match (&status.cli, status.vault) {
+            (CliState::Checking, _) => "loading",
+            (CliState::Ready { .. }, VaultState::Unlocked) => "vault",
+            (CliState::Ready { .. }, VaultState::Locked | VaultState::Unlocking) => "locked",
+            (CliState::Ready { .. }, VaultState::LoggedOut) => "signin",
+            (CliState::Ready { .. }, VaultState::Unknown) => "loading",
+            _ => "setup",
+        };
+        let previous = self.stack.visible_child_name();
+        self.stack.set_visible_child_name(page);
+        self.unlock.set_status(status);
+        self.sign_in.set_status(status);
+        self.setup.set_status(status);
+        if page == "locked" && previous.as_deref() != Some("locked") {
+            self.unlock.focus();
+        }
+        if page == "vault" && previous.as_deref() != Some("vault") {
+            self.search.grab_focus();
+        }
+        let account = status.account.as_ref();
+        self.account_email.set_label(account.and_then(|a| a.email.as_deref()).unwrap_or("Not signed in"));
+        self.account_server.set_label(&server_name(account.and_then(|a| a.server_url.as_deref())));
+        self.sync_label.set_label(&match (status.syncing, &status.last_sync) {
+            (true, _) => "Syncing…".to_owned(),
+            (false, Some(when)) => format!("Synced {}", relative_time(when)),
+            (false, None) => String::new(),
+        });
+        self.dot.set_css_classes(&match (status.vault, status.syncing) {
+            (_, true) => vec!["cs-dot", "syncing"],
+            (VaultState::Unlocked, _) => vec!["cs-dot"],
+            _ => vec!["cs-dot", "locked"],
+        });
+    }
+
+    fn vault_changed(&self, vault: &Rc<VaultSnapshot>) {
+        *self.items.borrow_mut() = vault.items.iter().cloned().map(Rc::new).collect();
+        *self.trash.borrow_mut() = vault.trash.iter().cloned().map(Rc::new).collect();
+        self.detail.set_vault(vault);
+        self.rebuild_sidebar(vault);
+        self.refresh_list();
+        if let Some(id) = self.detail.current() {
+            self.detail.reload(Some(&id));
+        }
+    }
+
+    fn clipboard(&self, event: &ClipboardEvent) {
+        self.receipt.show(event);
+    }
+}
