@@ -33,6 +33,8 @@ pub struct App {
     events: async_channel::Sender<Option<Event>>,
     pub status: RefCell<Status>,
     pub vault: RefCell<Rc<VaultSnapshot>>,
+    /// Recently copied item ids, newest first.
+    pub recent: RefCell<Vec<String>>,
     pub settings: RefCell<Settings>,
     views: RefCell<Vec<Weak<dyn View>>>,
     vault_reload: RefCell<Option<glib::SourceId>>,
@@ -57,6 +59,7 @@ impl App {
                 syncing: false,
             }),
             vault: RefCell::new(Rc::new(VaultSnapshot::default())),
+            recent: RefCell::default(),
             settings: RefCell::new(Settings::default()),
             views: RefCell::new(Vec::new()),
             vault_reload: RefCell::new(None),
@@ -161,6 +164,7 @@ impl App {
         match event {
             Some(Event::Status { status }) => self.set_status(status),
             Some(Event::VaultChanged) => self.schedule_vault_reload(),
+            Some(Event::Recent { ids }) => *self.recent.borrow_mut() = ids,
             Some(Event::Clipboard { clipboard }) => self.each_view(|v| v.clipboard(&clipboard)),
             None => {
                 // The daemon went away; reconnect on the next request.
@@ -204,6 +208,7 @@ impl App {
         if let Ok(Response::Vault { vault }) = self.request(Request::Vault).await {
             let fetched = start.elapsed();
             let count = vault.items.len();
+            *self.recent.borrow_mut() = vault.recent.clone();
             let vault = Rc::new(vault);
             *self.vault.borrow_mut() = vault.clone();
             self.each_view(|v| v.vault_changed(&vault));

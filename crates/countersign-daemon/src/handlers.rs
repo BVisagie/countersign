@@ -344,9 +344,15 @@ impl Daemon {
         Ok(Response::Status { status: self.status() })
     }
 
+    /// Syncs shortly after the vault opens. The CLI answers one request at
+    /// a time, so syncing at once would hold up the first copy after unlock.
     fn spawn_sync(self: &Arc<Self>) {
         let me = self.clone();
         tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+            if !me.is_unlocked() {
+                return;
+            }
             if let Err(e) = me.sync().await {
                 tracing::info!("sync after unlock failed: {e}");
             }

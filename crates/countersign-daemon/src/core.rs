@@ -70,6 +70,8 @@ pub struct Daemon {
     rebuild: tokio::sync::Mutex<()>,
     cli: Mutex<Option<Cli>>,
     session: Mutex<Option<Session>>,
+    /// A CLI being unlocked, kept where `lock` can stop it.
+    opening: Mutex<Option<Serve>>,
     prepared: Mutex<Option<(Serve, Instant)>>,
     epoch: Arc<AtomicU64>,
     vault: Mutex<Arc<VaultSnapshot>>,
@@ -101,6 +103,7 @@ impl Daemon {
             rebuild: tokio::sync::Mutex::new(()),
             cli: Mutex::new(None),
             session: Mutex::new(None),
+            opening: Mutex::new(None),
             prepared: Mutex::new(None),
             epoch: Arc::new(AtomicU64::new(0)),
             vault: Mutex::new(Arc::new(VaultSnapshot::default())),
@@ -323,30 +326,33 @@ impl Daemon {
             VaultState::LoggedOut => return Err(IpcError::new(ErrorCode::LoggedOut, "Sign in first.")),
             _ => return Err(IpcError::new(ErrorCode::Busy, "Countersign is still starting.")),
         }
-        let epoch = self.epoch.load(Ordering::SeqCst);
-        self.update_status(|s| s.vault = VaultState::Unlocking);
+        let epoch = self.epoch();
         let cli = self.cli()?;
+        self.update_status(|s| s.vault = VaultState::Unlocking);
         let serve = match self.take_prepared() {
             Some(serve) => serve,
             None => match Serve::start(&cli, None).await {
                 Ok(serve) => serve,
                 Err(e) => {
-                    self.update_status(|s| s.vault = VaultState::Locked);
+                    self.settle_locked(epoch);
                     return Err(ipc_error(e));
                 }
             },
         };
-        let key = match serve.client().unlock(&password).await {
+        let client = self.stage(serve, epoch).await?;
+        let key = match client.unlock(&password).await {
             Ok(key) => key,
             Err(e) => {
-                // Keep the started CLI for the next attempt.
-                *self.prepared.lock().expect("prepared") = Some((serve, Instant::now()));
-                self.update_status(|s| s.vault = VaultState::Locked);
+                // Keep the started CLI for the next attempt, unless a lock took it.
+                if let Some(serve) = self.unstage(epoch) {
+                    *self.prepared.lock().expect("prepared") = Some((serve, Instant::now()));
+                }
+                self.settle_locked(epoch);
                 return Err(password_error(e));
             }
         };
         drop(password);
-        self.install_session(serve, key, epoch).await
+        self.open(key, epoch).await
     }
 
     /// Opens the vault with a session key printed by `bw login --raw`.
@@ -355,76 +361,117 @@ impl Daemon {
         if self.status().vault != VaultState::Locked {
             return Ok(());
         }
-        let epoch = self.epoch.load(Ordering::SeqCst);
+        let epoch = self.epoch();
         let cli = self.cli()?;
         let serve = Serve::start(&cli, Some(&key)).await.map_err(ipc_error)?;
-        match serve.client().status().await {
-            Ok(s) if s.status == AuthStatus::Unlocked => self.install_session(serve, key, epoch).await,
+        let client = self.stage(serve, epoch).await?;
+        match client.status().await {
+            Ok(s) if s.status == AuthStatus::Unlocked => self.open(key, epoch).await,
             _ => {
-                serve.shutdown().await;
+                if let Some(serve) = self.unstage(epoch) {
+                    serve.shutdown().await;
+                }
                 Err(IpcError::new(ErrorCode::Locked, "Unlock to continue."))
             }
         }
     }
 
-    async fn install_session(&self, serve: Serve, key: SessionKey, epoch: u64) -> Result<(), IpcError> {
-        // Build the index before the vault counts as open.
-        let client = serve.client().clone();
+    /// Puts a CLI that is about to be unlocked where `lock` can stop it.
+    async fn stage(&self, serve: Serve, epoch: u64) -> Result<ServeClient, IpcError> {
+        let refused = {
+            let _slot = self.session.lock().expect("session");
+            if self.epoch() == epoch {
+                let client = serve.client().clone();
+                *self.opening.lock().expect("opening") = Some(serve);
+                return Ok(client);
+            }
+            serve
+        };
+        refused.shutdown().await;
+        Err(locked_while_opening())
+    }
+
+    /// Takes the staged CLI back, unless a lock already took it.
+    fn unstage(&self, epoch: u64) -> Option<Serve> {
+        let _slot = self.session.lock().expect("session");
+        if self.epoch() != epoch {
+            return None;
+        }
+        self.opening.lock().expect("opening").take()
+    }
+
+    /// Marks the vault locked after a failed unlock, unless a lock already
+    /// settled the state.
+    fn settle_locked(&self, epoch: u64) {
+        let _slot = self.session.lock().expect("session");
+        if self.epoch() == epoch {
+            self.update_status(|s| {
+                if s.vault == VaultState::Unlocking {
+                    s.vault = VaultState::Locked;
+                }
+            });
+        }
+    }
+
+    /// Moves the staged, unlocked CLI into the session, builds the index,
+    /// then marks the vault open. A lock at any point wins.
+    async fn open(&self, key: SessionKey, epoch: u64) -> Result<(), IpcError> {
+        let client = {
+            let mut slot = self.session.lock().expect("session");
+            let staged =
+                if self.epoch() == epoch { self.opening.lock().expect("opening").take() } else { None };
+            let Some(serve) = staged else { return Err(locked_while_opening()) };
+            let client = serve.client().clone();
+            *slot = Some(Session { serve, key });
+            client
+        };
         if let Err(e) = self.rebuild(&client, epoch).await {
             tracing::warn!("building the vault index failed: {e}");
         }
         self.touch();
-        match self.commit_session(Session { serve, key }, epoch, true) {
-            Ok(()) => {
-                self.emit(Event::VaultChanged);
-                Ok(())
+        {
+            let slot = self.session.lock().expect("session");
+            if self.epoch() != epoch || slot.is_none() {
+                return Err(locked_while_opening());
             }
-            Err(Session { serve, key }) => {
-                let _ = tokio::time::timeout(Duration::from_secs(3), serve.client().lock()).await;
-                serve.shutdown().await;
-                drop(key);
-                self.update_status(|s| {
-                    if s.vault == VaultState::Unlocking {
-                        s.vault = VaultState::Locked;
-                    }
-                });
-                Err(IpcError::new(ErrorCode::Locked, "The vault was locked while it was opening."))
-            }
+            self.update_status(|s| s.vault = VaultState::Unlocked);
         }
+        self.emit(Event::VaultChanged);
+        Ok(())
     }
 
     /// Stores a session unless a lock happened since `epoch`. `lock` bumps
     /// the epoch under the same mutex, so the check and the store cannot be
     /// separated by a lock. Hands the session back when refused.
     #[allow(clippy::result_large_err, reason = "hands the refused session back to be shut down")]
-    fn commit_session(&self, session: Session, epoch: u64, open: bool) -> Result<(), Session> {
+    fn commit_session(&self, session: Session, epoch: u64) -> Result<(), Session> {
         let mut slot = self.session.lock().expect("session");
         if self.epoch.load(Ordering::SeqCst) != epoch {
             return Err(session);
         }
         *slot = Some(session);
-        if open {
-            self.update_status(|s| s.vault = VaultState::Unlocked);
-        }
         Ok(())
     }
 
     /// Locks immediately. Safe to call from any task, any number of times.
     pub async fn lock(&self, reason: LockReason) {
-        let session = {
+        let (session, opening, prepared) = {
             let mut slot = self.session.lock().expect("session");
             self.epoch.fetch_add(1, Ordering::SeqCst);
             self.grants.lock().expect("grants").clear();
+            *self.vault.lock().expect("vault") = Arc::new(VaultSnapshot::default());
             self.update_status(|s| {
                 if matches!(s.vault, VaultState::Unlocked | VaultState::Unlocking) {
                     s.vault = VaultState::Locked;
                 }
                 s.syncing = false;
             });
-            slot.take()
+            (
+                slot.take(),
+                self.opening.lock().expect("opening").take(),
+                self.prepared.lock().expect("prepared").take(),
+            )
         };
-        let prepared = self.prepared.lock().expect("prepared").take();
-        *self.vault.lock().expect("vault") = Arc::new(VaultSnapshot::default());
         let was_unlocked = session.is_some();
         self.copy_timers.lock().expect("timers").cancel();
         let clipboard = self.clipboard.clone();
@@ -441,16 +488,19 @@ impl Daemon {
                 },
             });
         }
-        if let Some(Session { serve, key }) = session {
+        let unlocked = session.map(|Session { serve, .. }| serve).into_iter().chain(opening);
+        for serve in unlocked {
             if tokio::time::timeout(Duration::from_secs(3), serve.client().lock()).await.is_err() {
                 tracing::warn!("the CLI did not confirm the lock in time");
             }
             serve.shutdown().await;
-            drop(key);
         }
         if let Some((serve, _)) = prepared {
             serve.shutdown().await;
         }
+        // An unlock or restart in flight now fails; let it finish cleaning
+        // up before reporting the vault locked.
+        let _ = tokio::time::timeout(Duration::from_secs(2), self.ops.lock()).await;
         if was_unlocked {
             tracing::info!("vault locked ({reason:?})");
             self.emit(Event::VaultChanged);
@@ -485,12 +535,13 @@ impl Daemon {
             Ok(serve) => serve,
             Err(e) => {
                 drop(key);
+                drop(_op);
                 self.lock(LockReason::Requested).await;
                 return Err(ipc_error(e));
             }
         };
         let client = serve.client().clone();
-        if let Err(Session { serve, .. }) = self.commit_session(Session { serve, key }, epoch, false) {
+        if let Err(Session { serve, .. }) = self.commit_session(Session { serve, key }, epoch) {
             serve.shutdown().await;
             return Err(self.closed_error());
         }
@@ -606,6 +657,7 @@ impl Daemon {
         snapshot.trash.sort_by(|a, b| by_name(&a.name, &b.name));
         snapshot.folders.sort_by(|a, b| by_name(&a.name, &b.name));
         snapshot.collections.sort_by(|a, b| by_name(&a.name, &b.name));
+        let _slot = self.session.lock().expect("session");
         if self.epoch.load(Ordering::SeqCst) == epoch {
             let ids: std::collections::HashSet<&str> = snapshot.items.iter().map(|i| i.id.as_str()).collect();
             self.recent.lock().expect("recent").retain(|r| ids.contains(r.as_str()));
@@ -652,6 +704,10 @@ impl Daemon {
         }
         self.emit(Event::VaultChanged);
     }
+}
+
+fn locked_while_opening() -> IpcError {
+    IpcError::new(ErrorCode::Locked, "The vault was locked while it was opening.")
 }
 
 /// Failures from checking a master password. The CLI reports a wrong

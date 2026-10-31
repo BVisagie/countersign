@@ -218,6 +218,10 @@ pub enum Event {
     },
     /// Items, folders or Sends changed; refresh what is shown.
     VaultChanged,
+    /// The most recently copied item ids changed, newest first.
+    Recent {
+        ids: Vec<String>,
+    },
     Clipboard {
         clipboard: ClipboardEvent,
     },

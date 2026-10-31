@@ -91,6 +91,8 @@ impl Detail {
         let generation = self.generation.get() + 1;
         self.generation.set(generation);
         *self.current.borrow_mut() = id.map(str::to_owned);
+        // Drop the previous item at once, including any revealed values.
+        clear(&self.content);
         let Some(id) = id.map(str::to_owned) else {
             self.root.set_visible_child_name("empty");
             return;
@@ -127,7 +129,6 @@ impl Detail {
         titles.set_hexpand(true);
         let title = label(&name, &["cs-detail-title"]);
         title.set_wrap(true);
-        title.set_selectable(true);
         titles.append(&title);
         let first_uri = item["login"]["uris"][0]["uri"].as_str().unwrap_or_default();
         let subtitle =
@@ -295,7 +296,6 @@ impl Detail {
             let body = label(&notes, &["cs-field-value"]);
             body.set_wrap(true);
             body.set_wrap_mode(gtk::pango::WrapMode::WordChar);
-            body.set_selectable(true);
             let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
             row.add_css_class("cs-notes");
             body.set_hexpand(true);
@@ -394,8 +394,9 @@ impl Detail {
     }
 
     fn plain_field(self: &Rc<Self>, id: &str, title: &str, value: &str, copy: Option<Field>) -> gtk::Box {
+        // Values are not selectable: copying goes through the daemon, which
+        // marks it sensitive and clears it.
         let value_label = label(value, &["cs-field-value"]);
-        value_label.set_selectable(true);
         value_label.set_wrap(true);
         value_label.set_wrap_mode(gtk::pango::WrapMode::WordChar);
         let (row, buttons) = self.row(title, value_label.upcast_ref());
@@ -441,7 +442,6 @@ impl Detail {
                 match result {
                     Ok(Some(secret)) => {
                         value.set_label(secret.expose());
-                        value.set_selectable(true);
                         value.remove_css_class("secret");
                         button.set_icon_name("view-conceal-symbolic");
                         shown.set(true);
@@ -559,7 +559,6 @@ impl Detail {
 
     fn uri_field(self: &Rc<Self>, id: &str, index: usize, uri: &str) -> gtk::Box {
         let value = label(uri, &["cs-field-value"]);
-        value.set_selectable(true);
         value.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
         let (row, buttons) = self.row(if index == 0 { "Website" } else { "Also" }, value.upcast_ref());
         if let Some(target) = launchable(uri) {

@@ -100,7 +100,7 @@ pub fn run(app: &Rc<App>, dir: PathBuf) {
         shot(main.window.upcast_ref(), "main-medium");
 
         let quick = quick::get_or_create(&app);
-        background(&quick.window);
+        background(quick.window.upcast_ref());
         quick.show();
         if gtk4_layer_shell::is_supported() {
             quick.window.set_keyboard_mode(KeyboardMode::None);

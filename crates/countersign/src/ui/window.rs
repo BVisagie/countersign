@@ -553,7 +553,10 @@ impl MainWindow {
             let weak = weak.clone();
             keys.connect_key_pressed(move |_, key, _, state| {
                 let Some(me) = weak.upgrade() else { return glib::Propagation::Proceed };
-                if me.stack.visible_child_name().as_deref() != Some("vault") {
+                // Leave keys to an open dialog, such as the re-prompt.
+                if me.stack.visible_child_name().as_deref() != Some("vault")
+                    || me.window.visible_dialog().is_some()
+                {
                     return glib::Propagation::Proceed;
                 }
                 me.app.activity();
@@ -737,7 +740,7 @@ impl MainWindow {
     fn refresh_list(&self) {
         let filter = self.filter.borrow().clone();
         let query = self.search.text();
-        let recent = self.app.vault.borrow().recent.clone();
+        let recent = self.app.recent.borrow().clone();
         let (shown, total) = {
             let source = if filter == Filter::Trash { self.trash.borrow() } else { self.items.borrow() };
             let candidates: Vec<&Rc<ItemSummary>> = source.iter().filter(|i| filter.matches(i)).collect();

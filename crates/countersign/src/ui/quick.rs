@@ -43,7 +43,7 @@ pub fn get_or_create(app: &Rc<App>) -> Rc<Quick> {
 }
 
 pub struct Quick {
-    pub window: gtk::Window,
+    pub window: adw::Window,
     pub panel: gtk::Box,
     app: Rc<App>,
     stack: gtk::Stack,
@@ -58,7 +58,9 @@ pub struct Quick {
 
 impl Quick {
     pub fn new(app: &Rc<App>) -> Rc<Self> {
-        let window = gtk::Window::builder()
+        // An Adwaita window, so dialogs such as the re-prompt open inside
+        // the overlay instead of as a separate window it holds focus from.
+        let window = adw::Window::builder()
             .application(&app.gtk)
             .title("Countersign")
             .default_width(WIDTH)
@@ -157,7 +159,7 @@ impl Quick {
         outer.set_margin_end(24);
         outer.set_margin_bottom(36);
         outer.append(&panel);
-        window.set_child(Some(&outer));
+        window.set_content(Some(&outer));
 
         let quick = Rc::new(Quick {
             window,
@@ -219,6 +221,9 @@ impl Quick {
         keys.set_propagation_phase(gtk::PropagationPhase::Capture);
         keys.connect_key_pressed(move |_, key, _, state| {
             let Some(me) = weak.upgrade() else { return glib::Propagation::Proceed };
+            if me.window.visible_dialog().is_some() {
+                return glib::Propagation::Proceed;
+            }
             let ctrl = state.contains(gdk::ModifierType::CONTROL_MASK);
             let shift = state.contains(gdk::ModifierType::SHIFT_MASK);
             if key == gdk::Key::Escape {
@@ -309,7 +314,7 @@ impl Quick {
         let items = self.items.borrow();
         let refs: Vec<&ItemSummary> = items.iter().map(|r| r.as_ref()).collect();
         let query = self.search.text();
-        let recent = self.app.vault.borrow().recent.clone();
+        let recent = self.app.recent.borrow().clone();
         let order = self.searcher.borrow_mut().rank(&refs, &query, &recent);
         let shown: Vec<Rc<ItemSummary>> = order.iter().take(200).map(|&i| items[i].clone()).collect();
         drop(items);

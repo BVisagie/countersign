@@ -43,7 +43,13 @@ pub async fn watch_sleep(daemon: Arc<Daemon>) -> Result<()> {
     let mut settings = daemon.subscribe_settings();
     let mut inhibitor: Option<OwnedFd> = None;
     loop {
-        let wanted = daemon.is_unlocked() && settings.borrow().lock_on_suspend;
+        // Hold the inhibitor while unlocking too, so sleep cannot interrupt
+        // an unlock that would finish afterwards.
+        let opening = matches!(
+            daemon.status().vault,
+            countersign_ipc::VaultState::Unlocked | countersign_ipc::VaultState::Unlocking
+        );
+        let wanted = opening && settings.borrow().lock_on_suspend;
         if wanted && inhibitor.is_none() {
             match manager
                 .inhibit("sleep", "Countersign", "Lock the vault before the computer sleeps", "delay")

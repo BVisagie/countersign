@@ -28,6 +28,10 @@ attachments answer "Premium status is required" on the free test account.
 earlier, so the daemon uses the item returned by create instead of reading
 it back.
 
+The CLI answers one request at a time on its connection. A sync takes 0.2–2 s
+depending on the network, so the daemon syncs ten seconds after unlocking,
+after the usual unlock-then-copy, rather than straight away.
+
 ## Countersign
 
 | Gate | Target | Measured |
@@ -35,7 +39,7 @@ it back.
 | Quick access opens | under 100 ms | 30–50 ms from request to mapped window (Broadway); paint on Hyprland still to confirm |
 | Search per keystroke, 5,000 items | under 16 ms | 0.21–0.42 ms |
 | Vault shown after it changes, 1,142 items | | 3.5 ms to fetch, 13–34 ms on screen |
-| Copy to the clipboard | under 50 ms | 17.5 ms from request to the clipboard owning it |
+| Copy to the clipboard | under 50 ms | 12–18 ms, including confirming the compositor published it |
 | Countersign's own memory | under 100 MB | app 74 MB, daemon 14 MB |
 | Idle CPU | zero | app, daemon and CLI 0.00% over 30 s |
 

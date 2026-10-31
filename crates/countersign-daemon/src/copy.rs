@@ -42,6 +42,7 @@ impl Daemon {
         self.copy_timers.lock().expect("timers").cancel();
         let generation = self.put(value, epoch, None, settings.clipboard_clear_secs).await?;
         self.note_recent(id);
+        self.emit(Event::Recent { ids: self.vault().recent });
         let follow_up = field == Field::Password && has_totp && settings.totp_follow_up;
         self.schedule_clear(generation, settings.clipboard_clear_secs);
         if follow_up {
