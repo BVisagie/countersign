@@ -69,11 +69,7 @@ impl Cli {
             .iter()
             .filter_map(|name| std::env::var_os(name).map(|v| (OsString::from(name), v)))
             .collect();
-        Cli {
-            path: path.into(),
-            appdata: appdata.into(),
-            passthrough,
-        }
+        Cli { path: path.into(), appdata: appdata.into(), passthrough }
     }
 
     pub fn path(&self) -> &Path {
@@ -90,10 +86,7 @@ impl Cli {
         let mut env = vec![
             (OsString::from("PATH"), OsString::from("/usr/bin:/bin")),
             (OsString::from("LANG"), OsString::from("C.UTF-8")),
-            (
-                OsString::from("BITWARDENCLI_APPDATA_DIR"),
-                self.appdata.clone().into_os_string(),
-            ),
+            (OsString::from("BITWARDENCLI_APPDATA_DIR"), self.appdata.clone().into_os_string()),
         ];
         if let Some(home) = std::env::var_os("HOME") {
             env.push((OsString::from("HOME"), home));
@@ -118,27 +111,20 @@ impl Cli {
         if !self.path.is_file() {
             return Err(BwError::CliMissing(self.path.clone()));
         }
-        let out = self
-            .run(self.args(["--version"]), Duration::from_secs(30))
-            .await?;
+        let out = self.run(self.args(["--version"]), Duration::from_secs(30)).await?;
         let text = String::from_utf8_lossy(&out.stdout);
         let version = CliVersion::parse(&text).ok_or_else(|| BwError::Unsupported {
             found: text.trim().chars().take(40).collect(),
             minimum: MINIMUM_VERSION,
         })?;
         if !version.is_supported() {
-            return Err(BwError::Unsupported {
-                found: version.to_string(),
-                minimum: MINIMUM_VERSION,
-            });
+            return Err(BwError::Unsupported { found: version.to_string(), minimum: MINIMUM_VERSION });
         }
         Ok(version)
     }
 
     pub async fn status(&self) -> Result<CliStatus> {
-        let out = self
-            .run(self.args(["status"]), Duration::from_secs(30))
-            .await?;
+        let out = self.run(self.args(["status"]), Duration::from_secs(30)).await?;
         serde_json::from_slice(&out.stdout).map_err(|e| BwError::Protocol(format!("status: {e}")))
     }
 
@@ -146,20 +132,12 @@ impl Cli {
     /// US cloud. Only allowed while logged out.
     pub async fn config_server(&self, url: Option<&str>) -> Result<()> {
         let url = url.unwrap_or("https://vault.bitwarden.com");
-        self.checked(
-            self.args(["config", "server", url]),
-            Duration::from_secs(30),
-        )
-        .await
+        self.checked(self.args(["config", "server", url]), Duration::from_secs(30)).await
     }
 
     /// Logs in with a personal API key. The key travels in the child's
     /// environment, never its arguments.
-    pub async fn login_api_key(
-        &self,
-        client_id: &SecretString,
-        client_secret: &SecretString,
-    ) -> Result<()> {
+    pub async fn login_api_key(&self, client_id: &SecretString, client_secret: &SecretString) -> Result<()> {
         let mut cmd = self.args(["login", "--apikey"]);
         cmd.env("BW_CLIENTID", client_id.expose_secret())
             .env("BW_CLIENTSECRET", client_secret.expose_secret());
@@ -167,18 +145,14 @@ impl Cli {
     }
 
     pub async fn logout(&self) -> Result<()> {
-        match self
-            .checked(self.args(["logout"]), Duration::from_secs(60))
-            .await
-        {
+        match self.checked(self.args(["logout"]), Duration::from_secs(60)).await {
             Err(BwError::NotLoggedIn) => Ok(()),
             other => other,
         }
     }
 
     pub async fn lock(&self) -> Result<()> {
-        self.checked(self.args(["lock"]), Duration::from_secs(30))
-            .await
+        self.checked(self.args(["lock"]), Duration::from_secs(30)).await
     }
 
     fn args<I, S>(&self, args: I) -> Command
@@ -198,11 +172,7 @@ impl Cli {
         if out.status.success() {
             return Ok(());
         }
-        let text = if out.stderr.is_empty() {
-            &out.stdout
-        } else {
-            &out.stderr
-        };
+        let text = if out.stderr.is_empty() { &out.stdout } else { &out.stderr };
         Err(BwError::from_cli_message(&String::from_utf8_lossy(text)))
     }
 
@@ -215,13 +185,8 @@ impl Cli {
         let stdout = child.stdout.take().expect("piped stdout");
         let stderr = child.stderr.take().expect("piped stderr");
         let work = async {
-            let (out, err, status) =
-                tokio::join!(read_bounded(stdout), read_bounded(stderr), child.wait());
-            Ok::<_, BwError>(Output {
-                status: status?,
-                stdout: out?,
-                stderr: err?,
-            })
+            let (out, err, status) = tokio::join!(read_bounded(stdout), read_bounded(stderr), child.wait());
+            Ok::<_, BwError>(Output { status: status?, stdout: out?, stderr: err? })
         };
         match tokio::time::timeout(timeout, work).await {
             Ok(result) => result,
@@ -254,10 +219,8 @@ mod tests {
         .unwrap();
         assert_eq!(s.status, AuthStatus::Locked);
         assert_eq!(s.server_url.as_deref(), Some("https://vault.bitwarden.eu"));
-        let s: CliStatus = serde_json::from_str(
-            r#"{"serverUrl":null,"lastSync":null,"status":"unauthenticated"}"#,
-        )
-        .unwrap();
+        let s: CliStatus =
+            serde_json::from_str(r#"{"serverUrl":null,"lastSync":null,"status":"unauthenticated"}"#).unwrap();
         assert_eq!(s.status, AuthStatus::Unauthenticated);
     }
 
@@ -265,14 +228,8 @@ mod tests {
     fn environment_is_scrubbed() {
         let cli = Cli::new("/nonexistent/bw", "/tmp/profile");
         let env = cli.environment();
-        assert!(
-            env.iter()
-                .any(|(k, v)| k == "BITWARDENCLI_APPDATA_DIR" && v == "/tmp/profile")
-        );
-        assert!(
-            !env.iter()
-                .any(|(k, _)| k == "LD_PRELOAD" || k == "NODE_OPTIONS")
-        );
+        assert!(env.iter().any(|(k, v)| k == "BITWARDENCLI_APPDATA_DIR" && v == "/tmp/profile"));
+        assert!(!env.iter().any(|(k, _)| k == "LD_PRELOAD" || k == "NODE_OPTIONS"));
     }
 
     #[tokio::test]

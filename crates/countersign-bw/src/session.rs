@@ -13,9 +13,7 @@ impl SessionKey {
     pub fn from_raw(raw: String) -> Option<Self> {
         let valid = raw.len() == 88
             && raw.ends_with("==")
-            && raw[..86]
-                .bytes()
-                .all(|b| b.is_ascii_alphanumeric() || b == b'+' || b == b'/');
+            && raw[..86].bytes().all(|b| b.is_ascii_alphanumeric() || b == b'+' || b == b'/');
         let secret = SecretString::from(raw);
         valid.then_some(SessionKey(secret))
     }
@@ -43,10 +41,7 @@ mod tests {
         let bad = format!("{}==", "A\"".repeat(43));
         assert!(SessionKey::from_raw(bad).is_none());
         assert_eq!(
-            format!(
-                "{:?}",
-                SessionKey::from_raw(format!("{}==", "b".repeat(86))).unwrap()
-            ),
+            format!("{:?}", SessionKey::from_raw(format!("{}==", "b".repeat(86))).unwrap()),
             "SessionKey(..)"
         );
     }

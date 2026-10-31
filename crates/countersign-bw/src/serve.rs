@@ -110,14 +110,8 @@ impl Serve {
 
         let diagnostics = Arc::new(std::sync::Mutex::new(Vec::new()));
         for stream in [
-            child
-                .stdout
-                .take()
-                .map(|s| Box::new(s) as Box<dyn tokio::io::AsyncRead + Send + Unpin>),
-            child
-                .stderr
-                .take()
-                .map(|s| Box::new(s) as Box<dyn tokio::io::AsyncRead + Send + Unpin>),
+            child.stdout.take().map(|s| Box::new(s) as Box<dyn tokio::io::AsyncRead + Send + Unpin>),
+            child.stderr.take().map(|s| Box::new(s) as Box<dyn tokio::io::AsyncRead + Send + Unpin>),
         ]
         .into_iter()
         .flatten()
@@ -137,17 +131,11 @@ impl Serve {
         });
         let mut serve = Serve {
             child,
-            client: ServeClient {
-                sender: Arc::new(Mutex::new(sender)),
-            },
+            client: ServeClient { sender: Arc::new(Mutex::new(sender)) },
             connection,
             diagnostics,
         };
-        match serve
-            .client
-            .call(Method::GET, "/status", None, START_TIMEOUT)
-            .await
-        {
+        match serve.client.call(Method::GET, "/status", None, START_TIMEOUT).await {
             Ok(_) => Ok(serve),
             Err(BwError::Disconnected | BwError::Timeout) => {
                 let _ = tokio::time::timeout(Duration::from_secs(5), serve.child.wait()).await;
@@ -188,20 +176,13 @@ impl Serve {
     /// has not exited within three seconds.
     pub async fn shutdown(mut self) {
         self.connection.abort();
-        if tokio::time::timeout(Duration::from_secs(3), self.child.wait())
-            .await
-            .is_err()
-        {
+        if tokio::time::timeout(Duration::from_secs(3), self.child.wait()).await.is_err() {
             let _ = self.child.kill().await;
         }
     }
 
     fn diagnostic_text(&self) -> String {
-        let buf = self
-            .diagnostics
-            .lock()
-            .map(|b| b.clone())
-            .unwrap_or_default();
+        let buf = self.diagnostics.lock().map(|b| b.clone()).unwrap_or_default();
         String::from_utf8_lossy(&buf).trim().to_owned()
     }
 }
@@ -238,11 +219,8 @@ struct Envelope {
 
 impl ServeClient {
     pub async fn status(&self) -> Result<CliStatus> {
-        let data = self
-            .call(Method::GET, "/status", None, DEFAULT_TIMEOUT)
-            .await?;
-        serde_json::from_value(take(data, "template"))
-            .map_err(|e| BwError::Protocol(format!("status: {e}")))
+        let data = self.call(Method::GET, "/status", None, DEFAULT_TIMEOUT).await?;
+        serde_json::from_value(take(data, "template")).map_err(|e| BwError::Protocol(format!("status: {e}")))
     }
 
     /// Unlocks the vault and returns the new session key. Unlocking again
@@ -253,9 +231,7 @@ impl ServeClient {
         serde_json::to_writer(&mut *body, &serde_json::json!({ "password": secret }))
             .map_err(|e| BwError::Protocol(e.to_string()))?;
         let body = Bytes::from_owner(body);
-        let data = self
-            .call(Method::POST, "/unlock", Some(body), LONG_TIMEOUT)
-            .await?;
+        let data = self.call(Method::POST, "/unlock", Some(body), LONG_TIMEOUT).await?;
         let raw = match take(data, "raw") {
             Value::String(raw) => raw,
             _ => return Err(BwError::Protocol("unlock returned no session".into())),
@@ -265,15 +241,11 @@ impl ServeClient {
     }
 
     pub async fn lock(&self) -> Result<()> {
-        self.call(Method::POST, "/lock", None, DEFAULT_TIMEOUT)
-            .await
-            .map(drop)
+        self.call(Method::POST, "/lock", None, DEFAULT_TIMEOUT).await.map(drop)
     }
 
     pub async fn sync(&self) -> Result<()> {
-        self.call(Method::POST, "/sync", None, LONG_TIMEOUT)
-            .await
-            .map(drop)
+        self.call(Method::POST, "/sync", None, LONG_TIMEOUT).await.map(drop)
     }
 
     pub async fn list_items(&self, options: &ListOptions) -> Result<Vec<Value>> {
@@ -286,8 +258,7 @@ impl ServeClient {
         if options.trash {
             query.flag("trash");
         }
-        self.list(&format!("/list/object/items{}", query.finish()))
-            .await
+        self.list(&format!("/list/object/items{}", query.finish())).await
     }
 
     pub async fn list_folders(&self) -> Result<Vec<Value>> {
@@ -307,24 +278,13 @@ impl ServeClient {
     }
 
     pub async fn get_item(&self, id: &str) -> Result<Value> {
-        self.call(
-            Method::GET,
-            &format!("/object/item/{}", object_id(id)?),
-            None,
-            DEFAULT_TIMEOUT,
-        )
-        .await
+        self.call(Method::GET, &format!("/object/item/{}", object_id(id)?), None, DEFAULT_TIMEOUT).await
     }
 
     /// The current one-time code. Bitwarden requires Premium for this.
     pub async fn get_totp(&self, id: &str) -> Result<SecretString> {
         let data = self
-            .call(
-                Method::GET,
-                &format!("/object/totp/{}", object_id(id)?),
-                None,
-                DEFAULT_TIMEOUT,
-            )
+            .call(Method::GET, &format!("/object/totp/{}", object_id(id)?), None, DEFAULT_TIMEOUT)
             .await?;
         string_data(data)
     }
@@ -357,69 +317,48 @@ impl ServeClient {
             query.num("minNumber", options.min_number);
             query.num("minSpecial", options.min_special);
         }
-        let data = self
-            .call(
-                Method::GET,
-                &format!("/generate{}", query.finish()),
-                None,
-                DEFAULT_TIMEOUT,
-            )
-            .await?;
+        let data =
+            self.call(Method::GET, &format!("/generate{}", query.finish()), None, DEFAULT_TIMEOUT).await?;
         string_data(data)
     }
 
     pub async fn create_item(&self, item: &Value) -> Result<Value> {
-        self.call(
-            Method::POST,
-            "/object/item",
-            Some(json_body(item)?),
-            LONG_TIMEOUT,
-        )
-        .await
+        self.call(Method::POST, "/object/item", Some(json_body(item)?), LONG_TIMEOUT).await
     }
 
     /// Replaces an item. Send the complete object read from `get_item`, with
     /// changes applied, so fields Countersign does not edit are preserved.
     pub async fn edit_item(&self, id: &str, item: &Value) -> Result<Value> {
         let path = format!("/object/item/{}", object_id(id)?);
-        self.call(Method::PUT, &path, Some(json_body(item)?), LONG_TIMEOUT)
-            .await
+        self.call(Method::PUT, &path, Some(json_body(item)?), LONG_TIMEOUT).await
     }
 
     /// Moves an item to the trash, or deletes it for good.
     pub async fn delete_item(&self, id: &str, permanent: bool) -> Result<()> {
         let suffix = if permanent { "?permanent=true" } else { "" };
         let path = format!("/object/item/{}{suffix}", object_id(id)?);
-        self.call(Method::DELETE, &path, None, LONG_TIMEOUT)
-            .await
-            .map(drop)
+        self.call(Method::DELETE, &path, None, LONG_TIMEOUT).await.map(drop)
     }
 
     pub async fn restore_item(&self, id: &str) -> Result<()> {
         let path = format!("/restore/item/{}", object_id(id)?);
-        self.call(Method::POST, &path, None, LONG_TIMEOUT)
-            .await
-            .map(drop)
+        self.call(Method::POST, &path, None, LONG_TIMEOUT).await.map(drop)
     }
 
     pub async fn create_folder(&self, name: &str) -> Result<Value> {
         let body = json_body(&serde_json::json!({ "name": name }))?;
-        self.call(Method::POST, "/object/folder", Some(body), LONG_TIMEOUT)
-            .await
+        self.call(Method::POST, "/object/folder", Some(body), LONG_TIMEOUT).await
     }
 
     pub async fn edit_folder(&self, id: &str, name: &str) -> Result<Value> {
         let body = json_body(&serde_json::json!({ "name": name }))?;
         let path = format!("/object/folder/{}", object_id(id)?);
-        self.call(Method::PUT, &path, Some(body), LONG_TIMEOUT)
-            .await
+        self.call(Method::PUT, &path, Some(body), LONG_TIMEOUT).await
     }
 
     pub async fn delete_folder(&self, id: &str) -> Result<()> {
         let path = format!("/object/folder/{}", object_id(id)?);
-        self.call(Method::DELETE, &path, None, LONG_TIMEOUT)
-            .await
-            .map(drop)
+        self.call(Method::DELETE, &path, None, LONG_TIMEOUT).await.map(drop)
     }
 
     /// Moves a personal item into an organization and its collections.
@@ -433,38 +372,18 @@ impl ServeClient {
             return Err(BwError::Protocol("invalid collection id".into()));
         }
         let path = format!("/move/{}/{}", object_id(id)?, object_id(organization_id)?);
-        self.call(
-            Method::POST,
-            &path,
-            Some(json_body(&serde_json::json!(collection_ids))?),
-            LONG_TIMEOUT,
-        )
-        .await
+        self.call(Method::POST, &path, Some(json_body(&serde_json::json!(collection_ids))?), LONG_TIMEOUT)
+            .await
     }
 
     /// Downloads and decrypts an attachment.
-    pub async fn get_attachment(
-        &self,
-        item_id: &str,
-        attachment_id: &str,
-    ) -> Result<Zeroizing<Vec<u8>>> {
+    pub async fn get_attachment(&self, item_id: &str, attachment_id: &str) -> Result<Zeroizing<Vec<u8>>> {
         if attachment_id.is_empty() || !attachment_id.bytes().all(|b| b.is_ascii_alphanumeric()) {
             return Err(BwError::Protocol("invalid attachment id".into()));
         }
-        let path = format!(
-            "/object/attachment/{attachment_id}?itemid={}",
-            object_id(item_id)?
-        );
-        let (status, bytes) = self
-            .exchange(
-                Method::GET,
-                &path,
-                Full::default(),
-                None,
-                LONG_TIMEOUT,
-                FILE_LIMIT,
-            )
-            .await?;
+        let path = format!("/object/attachment/{attachment_id}?itemid={}", object_id(item_id)?);
+        let (status, bytes) =
+            self.exchange(Method::GET, &path, Full::default(), None, LONG_TIMEOUT, FILE_LIMIT).await?;
         if status == StatusCode::OK {
             return Ok(Zeroizing::new(bytes.to_vec()));
         }
@@ -472,17 +391,9 @@ impl ServeClient {
         Err(BwError::Protocol("attachment download failed".into()))
     }
 
-    pub async fn create_attachment(
-        &self,
-        item_id: &str,
-        file_name: &str,
-        data: &[u8],
-    ) -> Result<Value> {
+    pub async fn create_attachment(&self, item_id: &str, file_name: &str, data: &[u8]) -> Result<Value> {
         let boundary = format!("countersign-{:016x}", random_u64());
-        let name: String = file_name
-            .chars()
-            .filter(|c| !c.is_control() && *c != '"' && *c != '\\')
-            .collect();
+        let name: String = file_name.chars().filter(|c| !c.is_control() && *c != '"' && *c != '\\').collect();
         let mut body = Vec::with_capacity(data.len() + 256);
         body.extend_from_slice(
             format!(
@@ -511,47 +422,27 @@ impl ServeClient {
         if attachment_id.is_empty() || !attachment_id.bytes().all(|b| b.is_ascii_alphanumeric()) {
             return Err(BwError::Protocol("invalid attachment id".into()));
         }
-        let path = format!(
-            "/object/attachment/{attachment_id}?itemid={}",
-            object_id(item_id)?
-        );
-        self.call(Method::DELETE, &path, None, LONG_TIMEOUT)
-            .await
-            .map(drop)
+        let path = format!("/object/attachment/{attachment_id}?itemid={}", object_id(item_id)?);
+        self.call(Method::DELETE, &path, None, LONG_TIMEOUT).await.map(drop)
     }
 
     pub async fn get_send(&self, id: &str) -> Result<Value> {
-        self.call(
-            Method::GET,
-            &format!("/object/send/{}", object_id(id)?),
-            None,
-            DEFAULT_TIMEOUT,
-        )
-        .await
+        self.call(Method::GET, &format!("/object/send/{}", object_id(id)?), None, DEFAULT_TIMEOUT).await
     }
 
     /// Creates a text Send. File Sends are not supported by `bw serve`.
     pub async fn create_send(&self, send: &Value) -> Result<Value> {
-        self.call(
-            Method::POST,
-            "/object/send",
-            Some(json_body(send)?),
-            LONG_TIMEOUT,
-        )
-        .await
+        self.call(Method::POST, "/object/send", Some(json_body(send)?), LONG_TIMEOUT).await
     }
 
     pub async fn edit_send(&self, id: &str, send: &Value) -> Result<Value> {
         let path = format!("/object/send/{}", object_id(id)?);
-        self.call(Method::PUT, &path, Some(json_body(send)?), LONG_TIMEOUT)
-            .await
+        self.call(Method::PUT, &path, Some(json_body(send)?), LONG_TIMEOUT).await
     }
 
     pub async fn delete_send(&self, id: &str) -> Result<()> {
         let path = format!("/object/send/{}", object_id(id)?);
-        self.call(Method::DELETE, &path, None, LONG_TIMEOUT)
-            .await
-            .map(drop)
+        self.call(Method::DELETE, &path, None, LONG_TIMEOUT).await.map(drop)
     }
 
     pub async fn remove_send_password(&self, id: &str) -> Result<Value> {
@@ -560,10 +451,7 @@ impl ServeClient {
     }
 
     async fn list(&self, path: &str) -> Result<Vec<Value>> {
-        match take(
-            self.call(Method::GET, path, None, LONG_TIMEOUT).await?,
-            "data",
-        ) {
+        match take(self.call(Method::GET, path, None, LONG_TIMEOUT).await?, "data") {
             Value::Array(items) => Ok(items),
             _ => Err(BwError::Protocol(format!("{path} returned no list"))),
         }
@@ -578,14 +466,7 @@ impl ServeClient {
     ) -> Result<Value> {
         let content_type = body.is_some().then_some("application/json");
         let (status, bytes) = self
-            .exchange(
-                method,
-                path,
-                Full::new(body.unwrap_or_default()),
-                content_type,
-                timeout,
-                JSON_LIMIT,
-            )
+            .exchange(method, path, Full::new(body.unwrap_or_default()), content_type, timeout, JSON_LIMIT)
             .await?;
         parse_envelope(status, bytes)
     }
@@ -602,20 +483,12 @@ impl ServeClient {
         let work = async {
             let mut sender = self.sender.lock().await;
             sender.ready().await.map_err(|_| BwError::Disconnected)?;
-            let mut request = Request::builder()
-                .method(method)
-                .uri(path)
-                .header(HOST, SERVE_HOST);
+            let mut request = Request::builder().method(method).uri(path).header(HOST, SERVE_HOST);
             if let Some(content_type) = content_type {
                 request = request.header(CONTENT_TYPE, content_type);
             }
-            let request = request
-                .body(body)
-                .map_err(|e| BwError::Protocol(e.to_string()))?;
-            let response = sender
-                .send_request(request)
-                .await
-                .map_err(|_| BwError::Disconnected)?;
+            let request = request.body(body).map_err(|e| BwError::Protocol(e.to_string()))?;
+            let response = sender.send_request(request).await.map_err(|_| BwError::Disconnected)?;
             let status = response.status();
             let bytes = Limited::new(response.into_body(), limit)
                 .collect()
@@ -624,9 +497,7 @@ impl ServeClient {
                 .to_bytes();
             Ok((status, bytes))
         };
-        tokio::time::timeout(timeout, work)
-            .await
-            .map_err(|_| BwError::Timeout)?
+        tokio::time::timeout(timeout, work).await.map_err(|_| BwError::Timeout)?
     }
 }
 
@@ -642,9 +513,7 @@ fn parse_envelope(status: StatusCode, bytes: Bytes) -> Result<Value> {
     }
     let envelope = parsed.map_err(|e| BwError::Protocol(format!("HTTP {status}: {e}")))?;
     if !envelope.success {
-        let message = envelope
-            .message
-            .unwrap_or_else(|| "The Bitwarden CLI reported an error.".into());
+        let message = envelope.message.unwrap_or_else(|| "The Bitwarden CLI reported an error.".into());
         return Err(BwError::from_cli_message(&message));
     }
     Ok(envelope.data.unwrap_or(Value::Null))
@@ -668,11 +537,7 @@ fn json_body(value: &Value) -> Result<Bytes> {
 }
 
 fn object_id(id: &str) -> Result<&str> {
-    if is_object_id(id) {
-        Ok(id)
-    } else {
-        Err(BwError::Protocol("invalid object id".into()))
-    }
+    if is_object_id(id) { Ok(id) } else { Err(BwError::Protocol("invalid object id".into())) }
 }
 
 fn random_u64() -> u64 {
@@ -680,9 +545,7 @@ fn random_u64() -> u64 {
     // SAFETY: getrandom writes at most buf.len() bytes into the buffer.
     let n = unsafe { libc::getrandom(buf.as_mut_ptr().cast(), buf.len(), 0) };
     if n != 8 {
-        let t = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default();
+        let t = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
         return t.as_nanos() as u64 ^ u64::from(std::process::id());
     }
     u64::from_ne_bytes(buf)
@@ -737,26 +600,17 @@ mod tests {
         q.opt("search", Some("git hub&x=1/é"));
         q.flag("trash");
         q.num("length", Some(24));
-        assert_eq!(
-            q.finish(),
-            "?search=git%20hub%26x%3D1%2F%C3%A9&trash&length=24"
-        );
+        assert_eq!(q.finish(), "?search=git%20hub%26x%3D1%2F%C3%A9&trash&length=24");
     }
 
     #[test]
     fn envelope_errors_are_typed() {
         let locked = Bytes::from_static(br#"{"success":false,"message":"Vault is locked."}"#);
-        assert!(matches!(
-            parse_envelope(StatusCode::BAD_REQUEST, locked),
-            Err(BwError::Locked)
-        ));
+        assert!(matches!(parse_envelope(StatusCode::BAD_REQUEST, locked), Err(BwError::Locked)));
         let ok = Bytes::from_static(br#"{"success":true,"data":{"object":"string","data":"x"}}"#);
         let data = parse_envelope(StatusCode::OK, ok).unwrap();
         assert_eq!(string_data(data).unwrap().expose_secret(), "x");
-        assert!(matches!(
-            parse_envelope(StatusCode::FORBIDDEN, Bytes::new()),
-            Err(BwError::Protocol(_))
-        ));
+        assert!(matches!(parse_envelope(StatusCode::FORBIDDEN, Bytes::new()), Err(BwError::Protocol(_))));
     }
 
     #[test]

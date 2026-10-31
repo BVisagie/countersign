@@ -16,11 +16,7 @@ pub const PINNED_VERSION: CliVersion = CliVersion::new(2026, 10, 1);
 
 impl CliVersion {
     pub const fn new(major: u32, minor: u32, patch: u32) -> Self {
-        CliVersion {
-            major,
-            minor,
-            patch,
-        }
+        CliVersion { major, minor, patch }
     }
 
     /// Parses `bw --version` output. Prereleases, development builds and
@@ -56,10 +52,7 @@ mod tests {
 
     #[test]
     fn parses_stable_versions_only() {
-        assert_eq!(
-            CliVersion::parse("2026.10.1\n"),
-            Some(CliVersion::new(2026, 10, 1))
-        );
+        assert_eq!(CliVersion::parse("2026.10.1\n"), Some(CliVersion::new(2026, 10, 1)));
         assert_eq!(CliVersion::parse("2026.10.0-beta.1"), None);
         assert_eq!(CliVersion::parse("2026.10"), None);
         assert_eq!(CliVersion::parse("2026.10.1.2"), None);
