@@ -366,11 +366,23 @@ impl Daemon {
         }
         let cli = self.cli()?;
         let serve = Serve::start(&cli, None).await.map_err(ipc_error)?;
-        let old = self.prepared.lock().expect("prepared").replace((serve, Instant::now()));
-        if let Some((old, _)) = old {
-            tokio::spawn(old.shutdown());
+        if let Some(unused) = self.keep_prepared(serve) {
+            tokio::spawn(unused.shutdown());
         }
         Ok(())
+    }
+
+    /// Keeps a started CLI for the next unlock, and returns the one to stop:
+    /// the one it replaces, or this one if an unlock began while it started.
+    /// Runs under the session mutex, as `open` does, so an open never leaves
+    /// an idle CLI behind.
+    fn keep_prepared(&self, serve: Serve) -> Option<Serve> {
+        let _slot = self.session.lock().expect("session");
+        if self.status().vault != VaultState::Locked {
+            return Some(serve);
+        }
+        let old = self.prepared.lock().expect("prepared").replace((serve, Instant::now()));
+        old.map(|(old, _)| old)
     }
 
     fn take_prepared(&self) -> Option<Serve> {
@@ -524,15 +536,23 @@ impl Daemon {
             tracing::warn!("building the vault index failed: {e}");
         }
         self.touch();
-        {
-            let slot = self.session.lock().expect("session");
-            if self.epoch() != epoch || slot.is_none() {
-                return Err(locked_while_opening());
-            }
-            self.update_status(|s| s.vault = VaultState::Unlocked);
+        if let Some(unused) = self.mark_open(epoch)? {
+            tokio::spawn(unused.shutdown());
         }
         self.emit(Event::VaultChanged);
         Ok(())
+    }
+
+    /// Marks the vault open, unless a lock came first, and returns the CLI
+    /// started for an unlock this open made unneeded, such as one the
+    /// unlock page asked for during a sign-in.
+    fn mark_open(&self, epoch: u64) -> Result<Option<Serve>, IpcError> {
+        let slot = self.session.lock().expect("session");
+        if self.epoch() != epoch || slot.is_none() {
+            return Err(locked_while_opening());
+        }
+        self.update_status(|s| s.vault = VaultState::Unlocked);
+        Ok(self.prepared.lock().expect("prepared").take().map(|(serve, _)| serve))
     }
 
     /// Locks immediately. Safe to call from any task, any number of times.
@@ -878,6 +898,39 @@ mod tests {
         // A failed attempt in the current epoch settles back to Locked.
         daemon.settle_locked(daemon.epoch());
         assert_eq!(daemon.status().vault, VaultState::Locked);
+    }
+
+    /// A CLI started for an unlock is kept only while the vault is locked,
+    /// and opening the vault stops the one kept: none sits idle beside the
+    /// open session.
+    #[tokio::test]
+    async fn no_idle_cli_outlives_an_open() {
+        use std::os::unix::fs::PermissionsExt;
+        let (daemon, root) = daemon();
+        let bw = root.path().join("bw");
+        std::fs::write(&bw, "#!/bin/sh\nexec sleep 30\n").unwrap();
+        std::fs::set_permissions(&bw, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let cli = Cli::new(&bw, root.path().join("profile"));
+        let spawn = || Serve::spawn(&cli, None);
+
+        daemon.update_status(|s| s.vault = VaultState::Locked);
+        assert!(daemon.keep_prepared(spawn().await.unwrap()).is_none());
+        // A newer one replaces it.
+        assert!(daemon.keep_prepared(spawn().await.unwrap()).is_some());
+        // One that finishes starting after an unlock began is refused.
+        let epoch = daemon.begin_unlocking();
+        assert!(daemon.keep_prepared(spawn().await.unwrap()).is_some());
+        assert!(daemon.prepared.lock().unwrap().is_some());
+
+        let key = SessionKey::from_raw(format!("{}==", "a".repeat(86))).unwrap();
+        *daemon.session.lock().unwrap() = Some(Session { serve: spawn().await.unwrap(), key });
+        assert!(daemon.mark_open(epoch).unwrap().is_some());
+        assert!(daemon.prepared.lock().unwrap().is_none());
+        assert_eq!(daemon.status().vault, VaultState::Unlocked);
+        assert!(daemon.keep_prepared(spawn().await.unwrap()).is_some());
+        // A lock since the attempt began wins.
+        daemon.epoch.fetch_add(1, Ordering::SeqCst);
+        assert!(daemon.mark_open(epoch).is_err());
     }
 
     /// Stands in for the CLI: logs each call to the profile folder and
