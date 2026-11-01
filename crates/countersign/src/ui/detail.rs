@@ -21,14 +21,20 @@ const REVEAL_FOR: Duration = Duration::from_secs(60);
 
 pub struct Detail {
     pub root: gtk::Stack,
+    /// Edit and menu buttons for the pane's header bar.
+    pub actions: gtk::Box,
     content: gtk::Box,
-    app: Rc<App>,
-    notify: Rc<dyn Fn(&str)>,
-    current: RefCell<Option<String>>,
+    pub(super) app: Rc<App>,
+    pub(super) notify: Rc<dyn Fn(&str)>,
+    pub(super) current: RefCell<Option<String>>,
     /// Bumped on every render so stale async results are dropped.
     generation: Cell<u64>,
     timers: RefCell<Vec<glib::SourceId>>,
-    vault: RefCell<Rc<VaultSnapshot>>,
+    pub(super) vault: RefCell<Rc<VaultSnapshot>>,
+    pub(super) edit_button: gtk::Button,
+    pub(super) menu_button: gtk::MenuButton,
+    pub(super) action_group: gio::SimpleActionGroup,
+    pub(super) editor: RefCell<Option<Rc<super::editor::Editor>>>,
 }
 
 impl Detail {
@@ -51,8 +57,15 @@ impl Detail {
         root.add_named(&empty, Some("empty"));
         root.add_named(&scroller, Some("item"));
         root.set_visible_child_name("empty");
-        Rc::new(Detail {
+        let edit_button = icon_button("document-edit-symbolic", "Edit");
+        let menu_button =
+            gtk::MenuButton::builder().icon_name("view-more-symbolic").tooltip_text("More").build();
+        let actions = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+        actions.append(&edit_button);
+        actions.append(&menu_button);
+        let detail = Rc::new(Detail {
             root,
+            actions,
             content,
             app: app.clone(),
             notify,
@@ -60,11 +73,27 @@ impl Detail {
             generation: Cell::new(0),
             timers: RefCell::default(),
             vault: RefCell::default(),
-        })
+            edit_button,
+            menu_button,
+            action_group: gio::SimpleActionGroup::new(),
+            editor: RefCell::default(),
+        });
+        detail.install_actions();
+        detail
     }
 
     pub fn set_vault(&self, vault: &Rc<VaultSnapshot>) {
         *self.vault.borrow_mut() = vault.clone();
+    }
+
+    /// Whether the editor is open; background refreshes leave it alone.
+    pub fn is_editing(&self) -> bool {
+        self.editor.borrow().is_some()
+    }
+
+    /// Drops the results of any load or reveal still running.
+    pub(super) fn invalidate(&self) {
+        self.generation.set(self.generation.get() + 1);
     }
 
     pub fn current(&self) -> Option<String> {
@@ -91,8 +120,11 @@ impl Detail {
         let generation = self.generation.get() + 1;
         self.generation.set(generation);
         *self.current.borrow_mut() = id.map(str::to_owned);
-        // Drop the previous item at once, including any revealed values.
+        // Drop the previous item at once, including any revealed values,
+        // and any unsaved edit.
         clear(&self.content);
+        self.close_editor();
+        self.update_actions(None);
         let Some(id) = id.map(str::to_owned) else {
             self.root.set_visible_child_name("empty");
             return;
@@ -115,6 +147,7 @@ impl Detail {
     fn render(self: &Rc<Self>, id: &str, item: &Value, secret_fields: &[Field]) {
         clear(&self.content);
         self.root.set_visible_child_name("item");
+        self.update_actions(Some(item));
         let kind = item["type"].as_i64().and_then(ItemKind::from_type).unwrap_or(ItemKind::SecureNote);
         let text = |v: &Value| v.as_str().map(str::trim).filter(|s| !s.is_empty()).map(str::to_owned);
         let name = text(&item["name"]).unwrap_or_else(|| "(no name)".into());
@@ -171,6 +204,14 @@ impl Detail {
             chips.append(&chip("Passkey"));
         }
         self.content.append(&chips);
+        if let Some(deleted) = text(&item["deletedDate"]) {
+            let banner = adw::Banner::builder()
+                .title(format!("In the trash since {}", short_date(&deleted)))
+                .revealed(true)
+                .build();
+            banner.set_margin_top(6);
+            self.content.append(&banner);
+        }
 
         match kind {
             ItemKind::Login => {
@@ -581,6 +622,17 @@ impl Detail {
         let (row, buttons) = self.row(size, value.upcast_ref());
         let save = icon_button("document-save-symbolic", "Save attachment");
         buttons.append(&save);
+        let delete = icon_button("user-trash-symbolic", "Delete attachment");
+        buttons.append(&delete);
+        {
+            let weak = Rc::downgrade(self);
+            let (item_id, attachment, name) = (id.to_owned(), attachment_id.to_owned(), file.to_owned());
+            delete.connect_clicked(move |_| {
+                if let Some(me) = weak.upgrade() {
+                    me.delete_attachment(item_id.clone(), attachment.clone(), name.clone());
+                }
+            });
+        }
         let me = Rc::downgrade(self);
         let (id, attachment_id, file) = (id.to_owned(), attachment_id.to_owned(), file.to_owned());
         save.connect_clicked(move |button| {

@@ -19,6 +19,7 @@ async-channel.workspace = true
 countersign-ipc.workspace = true
 gtk.workspace = true
 gtk4-layer-shell.workspace = true
+ksni = { version = "0.3.7", default-features = false, features = ["blocking", "async-io"] }
 nucleo-matcher.workspace = true
 serde.workspace = true
 serde_json.workspace = true

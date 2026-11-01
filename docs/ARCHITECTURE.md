@@ -30,6 +30,18 @@ request to the running server costs milliseconds.
 The CLI refuses to serve until an account is logged in, and has no login
 route, so sign-in uses `bw login` itself.
 
+Two Send commands also run one-off, with the session key in the child's
+environment. `bw serve` has no route for file Sends, so `bw send create`
+reads its request on stdin. And `bw serve` 2026.10.1 answers `/send/list`
+from a cache it never refreshes: creates, edits, deletes and syncs do not
+show there until the server restarts. `bw send list` reads the stored vault
+each time, at the usual two to three seconds, so the app updates its Send
+list from each change's reply and lists again only after a sync or unlock.
+
+Editing a Send through the CLI removes its password unless the request
+carries one; the CLI never returns it. The editor therefore asks for the
+password again to keep it.
+
 ## The daemon
 
 `countersignd` starts on demand from the app, holds a lock so only one runs
@@ -43,6 +55,8 @@ its values remain on the clipboard.
 - **The index.** Summaries hold names, usernames, hosts, flags, folders and
   card brand with the last four digits. Passwords, codes, card numbers and
   notes are never in it.
+- **Sends** reach the app without their text, key or access link. The editor
+  asks for the text when you edit a Send, and the daemon copies links.
 - **Recovery.** If the CLI stops while unlocked, the next request restarts
   it with the session key, which reopens the vault without the password.
 - **Locking** never waits behind other work. It takes the session out first,
@@ -60,6 +74,17 @@ its values remain on the clipboard.
   display session; and a logind sleep delay inhibitor held only while
   unlocked, released after locking.
 
+## Installing the CLI
+
+Only when you ask, the daemon downloads the pinned release archive for this
+machine from Bitwarden's GitHub release over HTTPS, hashing it as it streams
+and refusing it unless the SHA-256 matches the digest recorded with the pin.
+It extracts only `bw`, runs `bw --version` in an empty profile, requires
+exactly the pinned version, and moves it into
+`~/.local/share/countersign/bitwarden-cli/<version>/` with one rename. A CLI
+you configured is never replaced; installing switches Countersign to the
+managed copy.
+
 ## The app
 
 `countersign` is a single-instance GTK application that stays running in the
@@ -70,6 +95,10 @@ The app talks to the daemon with GIO's asynchronous socket API on the main
 loop, so it has no threads of its own. Search ranks the index in the app with
 nucleo's fuzzy matcher. Lists are `GtkListView`s, which create rows only for
 what is visible.
+
+A StatusNotifierItem tray icon (ksni) shows the lock state and opens the
+windows. Copies made while the main window is not focused raise a desktop
+notification, withdrawn when the value is cleared.
 
 The theme reads `colors.toml` from the active Omarchy theme, maps it onto
 libadwaita's color variables, matches Hyprland's `decoration:rounding`, and

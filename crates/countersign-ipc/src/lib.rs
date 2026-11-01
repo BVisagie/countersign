@@ -10,7 +10,7 @@ mod model;
 mod protocol;
 mod secret;
 
-pub use field::{Field, redact, redact_protected};
+pub use field::{Field, redact, redact_protected, redact_send};
 pub use model::{
     Account, CliState, ClipboardEvent, ClipboardState, Collection, Folder, GenerateOptions, ItemKind,
     ItemSummary, Organization, Settings, Status, TerminalLaunch, TotpCode, VaultSnapshot, VaultState,

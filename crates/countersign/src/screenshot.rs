@@ -99,6 +99,23 @@ pub fn run(app: &Rc<App>, dir: PathBuf) {
         settle().await;
         shot(main.window.upcast_ref(), "main-medium");
 
+        main.window.set_default_size(1280, 800);
+        settle().await;
+        main.detail.edit();
+        settle().await;
+        shot(main.window.upcast_ref(), "edit");
+        main.list.select_by_id("00000000-0000-4000-8000-000000000001");
+        settle().await;
+
+        let _ = WidgetExt::activate_action(&main.window, "win.generator", None);
+        settle().await;
+        shot(main.window.upcast_ref(), "generator");
+
+        let _ = WidgetExt::activate_action(&main.window, "win.sends", None);
+        settle().await;
+        shot(main.window.upcast_ref(), "sends");
+        main.window.set_default_size(820, 800);
+
         let quick = quick::get_or_create(&app);
         background(quick.window.upcast_ref());
         quick.show();

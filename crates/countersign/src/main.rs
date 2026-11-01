@@ -12,6 +12,7 @@ mod search;
 mod socket;
 mod terminal;
 mod theme;
+mod tray;
 mod ui;
 
 use std::cell::RefCell;
@@ -91,6 +92,10 @@ fn main() -> glib::ExitCode {
                 screenshot::run(&app, dir.into());
             } else {
                 let starting = app.clone();
+                if let Some(tray) = tray::start(&app) {
+                    // Lives as long as the app.
+                    std::mem::forget(tray);
+                }
                 glib::spawn_future_local(async move {
                     starting.start().await;
                     // Build quick access ahead of time so it opens instantly.
@@ -146,5 +151,14 @@ fn install_actions(app: &Rc<App>) {
             }),
         );
     }
+    {
+        let app = app.clone();
+        add("skip-follow-up", Rc::new(move || app.fire(countersign_ipc::Request::SkipFollowUp)));
+    }
+    {
+        let app = app.clone();
+        add("settings", Rc::new(move || crate::ui::prefs::present(&app)));
+    }
     app.gtk.set_accels_for_action("app.quit", &["<Control>q"]);
+    app.gtk.set_accels_for_action("app.settings", &["<Control>comma"]);
 }

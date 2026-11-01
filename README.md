@@ -15,8 +15,15 @@ interface and the desktop integration around it.
 - **Quick access.** A launcher-style overlay: type a few letters, press
   Enter, and the password is on the clipboard. Recent items come first.
 - **The whole vault.** Logins, cards, identities, notes and SSH keys, with
-  folders, collections, favorites and trash. Secrets stay masked until you
+  folders, organization collections, favorites and trash, and a password and
+  passphrase generator. Secrets stay masked until you
   reveal them. Verification codes count down live.
+- **Editing.** Create and edit logins, cards, identities and notes, with
+  websites and custom fields; SSH keys keep their key and the rest can be
+  edited. Manage folders and attachments, move items to an organization,
+  and trash, restore or delete forever.
+- **Send.** Share text or a file through Bitwarden Send. A new Send's link
+  goes straight to the clipboard.
 - **A clipboard that cleans up.** Copies clear themselves after 30 seconds
   and are marked so Omarchy's clipboard history skips them. After a password
   copy, the item's one-time code replaces it a few seconds later.
@@ -30,6 +37,10 @@ interface and the desktop integration around it.
 | Omarchy Flexoki Light | Omarchy Tokyo Night |
 | --- | --- |
 | ![A card in a light theme](docs/screenshots/light-card.png) | ![Search in Tokyo Night](docs/screenshots/tokyo-night-search.png) |
+
+| Editing an item | Send |
+| --- | --- |
+| ![The item editor](docs/screenshots/edit.png) | ![The Send page](docs/screenshots/sends.png) |
 
 Screenshots use a fictional demo vault; see `scripts/screenshots.sh`.
 
@@ -47,18 +58,49 @@ measured performance.
   the official release for you, verified against Bitwarden's published
   checksum.
 
-## Build
+## Install
 
 ```bash
-cargo build --release
+scripts/install.sh
 ```
 
 This builds `countersign` (the app) and `countersignd` (its background
-service). Bind quick access in `~/.config/hypr/bindings.lua`, for example:
+service), installs them in `~/.local/bin`, and adds the desktop entry and
+icon. Then add quick access and autostart to Hyprland:
 
 ```lua
+-- ~/.config/hypr/bindings.lua
 o.bind("SUPER + SHIFT + P", "Passwords", "countersign --quick")
+-- ~/.config/hypr/autostart.lua
+o.launch_on_start("countersign --background")
 ```
+
+On first run Countersign offers to install the official CLI. It downloads the
+pinned release from Bitwarden's GitHub, checks it against the recorded
+SHA-256, and keeps it in `~/.local/share/countersign/bitwarden-cli/`. You can
+point it at a CLI of your own in Settings instead.
+
+## Use
+
+| Key | Action |
+| --- | --- |
+| `Enter` | Copy the password, card number or note |
+| `Shift+Enter` (quick access) | Copy the username or security code |
+| `Ctrl+C` / `Ctrl+B` / `Ctrl+T` | Copy the password / username / verification code |
+| `Ctrl+U` | Open the website |
+| `Ctrl+O` (quick access) | Show the item in the main window |
+| `Ctrl+F` or `/` | Search |
+| `Ctrl+R` | Sync |
+| `Ctrl+L` | Lock |
+| `Ctrl+N` | New login |
+| `Ctrl+G` | Password generator |
+| `Ctrl+,` | Settings |
+| `Esc` | Clear the search, then close quick access |
+
+Copies made from quick access show a notification. When the verification
+code is about to replace a copied password, the notification and the main
+window offer **Keep password**. The tray icon shows whether the vault is open;
+click it for Countersign, or use its menu for quick access and locking.
 
 ## How it works
 

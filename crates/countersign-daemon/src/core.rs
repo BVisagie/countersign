@@ -49,6 +49,13 @@ struct Session {
 pub(crate) struct CopyTimers {
     pub clear: Option<JoinHandle<()>>,
     pub follow_up: Option<JoinHandle<()>>,
+    /// When the current copy clears, and what it came from, so a skipped
+    /// follow-up can re-announce the copy accurately.
+    pub clear_at: Option<Instant>,
+    pub item_name: Option<String>,
+    /// Decides whether a pending code follow-up replaces the password or is
+    /// cancelled; see `copy::FollowUpState`.
+    pub follow_up_state: Option<Arc<crate::copy::FollowUpState>>,
 }
 
 impl CopyTimers {
@@ -56,6 +63,9 @@ impl CopyTimers {
         for task in [self.clear.take(), self.follow_up.take()].into_iter().flatten() {
             task.abort();
         }
+        self.clear_at = None;
+        self.item_name = None;
+        self.follow_up_state = None;
     }
 }
 
@@ -77,6 +87,9 @@ pub struct Daemon {
     vault: Mutex<Arc<VaultSnapshot>>,
     pub(crate) clipboard: Arc<Clipboard>,
     pub(crate) copy_timers: Mutex<CopyTimers>,
+    /// Orders clipboard events: a copy announces itself, and a timer checks
+    /// that no newer copy started before reporting, under this lock.
+    pub(crate) clipboard_events: Mutex<()>,
     activity: Mutex<Instant>,
     grants: Mutex<HashMap<String, Instant>>,
     recent: Mutex<VecDeque<String>>,
@@ -109,6 +122,7 @@ impl Daemon {
             vault: Mutex::new(Arc::new(VaultSnapshot::default())),
             clipboard: Arc::new(Clipboard::default()),
             copy_timers: Mutex::new(CopyTimers::default()),
+            clipboard_events: Mutex::new(()),
             activity: Mutex::new(Instant::now()),
             grants: Mutex::new(HashMap::new()),
             recent: Mutex::new(VecDeque::new()),
@@ -139,8 +153,10 @@ impl Daemon {
         self.settings.subscribe()
     }
 
+    /// Applies new settings and tells every connected app.
     pub(crate) fn set_settings(&self, settings: Settings) {
-        self.settings.send_replace(settings);
+        self.settings.send_replace(settings.clone());
+        let _ = self.events.send(Event::Settings { settings });
     }
 
     pub(crate) fn update_status(&self, change: impl FnOnce(&mut Status)) {
@@ -492,8 +508,11 @@ impl Daemon {
         let was_unlocked = session.is_some();
         self.copy_timers.lock().expect("timers").cancel();
         let clipboard = self.clipboard.clone();
-        let cleared =
-            tokio::task::spawn_blocking(move || clipboard.clear_if_ours(None)).await.unwrap_or(false);
+        let cleared = tokio::task::spawn_blocking(move || {
+            clipboard.clear_if_ours(None) == crate::clipboard::Clear::Cleared
+        })
+        .await
+        .unwrap_or(false);
         if cleared {
             self.emit(Event::Clipboard {
                 clipboard: ClipboardEvent {
@@ -577,6 +596,17 @@ impl Daemon {
             VaultState::LoggedOut => IpcError::new(ErrorCode::LoggedOut, "Sign in first."),
             _ => IpcError::new(ErrorCode::Locked, "The vault is locked."),
         }
+    }
+
+    /// A copy of the session key, for the one-off Send commands that
+    /// `bw serve` cannot run or answers stale; see `Cli::send_list`.
+    pub(crate) fn session_key(&self) -> Result<SessionKey, IpcError> {
+        self.session
+            .lock()
+            .expect("session")
+            .as_ref()
+            .map(|s| s.key.clone())
+            .ok_or_else(|| self.closed_error())
     }
 
     pub(crate) fn epoch(&self) -> u64 {

@@ -15,7 +15,7 @@ pub use cli::{AuthStatus, Cli, CliStatus};
 pub use error::{BwError, Result};
 pub use serve::{GenerateOptions, ListOptions, Serve, ServeClient};
 pub use session::SessionKey;
-pub use version::{CliVersion, MINIMUM_VERSION, PINNED_VERSION};
+pub use version::{CliVersion, MINIMUM_VERSION, PINNED_ARCHIVES, PINNED_VERSION, PinnedArchive};
 
 /// Checks that `id` has the shape of a Bitwarden object id before it is
 /// placed in a request path.

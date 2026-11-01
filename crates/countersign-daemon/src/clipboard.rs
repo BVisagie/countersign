@@ -36,22 +36,56 @@ struct Owned {
     alive: Arc<AtomicBool>,
 }
 
+/// What clearing found.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Clear {
+    /// Our value was on the clipboard and is gone now.
+    Cleared,
+    /// The clipboard held something else: another app replaced our value.
+    NotOurs,
+    /// Our value is still there; clearing it failed.
+    Failed,
+}
+
 /// Returned when a copy's guard refuses it, for example after a lock.
 #[derive(Debug, thiserror::Error)]
 #[error("the copy was cancelled")]
 pub struct Refused;
 
-/// The generation in the marker of the value the compositor currently holds.
-fn published() -> Option<u64> {
-    let (pipe, _) = paste::get_contents(
+/// The clipboard could not be read, so whose value it holds is unknown.
+#[derive(Debug)]
+struct Unreadable;
+
+/// The generation in the marker of the value the compositor holds:
+/// `Ok(None)` when it holds nothing, or something without our marker, and
+/// `Err` when it cannot be read, which must not be mistaken for either.
+fn published() -> Result<Option<u64>, Unreadable> {
+    let pipe = match paste::get_contents(
         paste::ClipboardType::Regular,
         paste::Seat::Unspecified,
         paste::MimeType::Specific(MARKER),
-    )
-    .ok()?;
+    ) {
+        Ok((pipe, _)) => pipe,
+        Err(paste::Error::ClipboardEmpty | paste::Error::NoMimeType) => return Ok(None),
+        Err(e) => {
+            tracing::debug!("reading the clipboard failed: {e}");
+            return Err(Unreadable);
+        }
+    };
     let mut text = String::new();
-    pipe.take(32).read_to_string(&mut text).ok()?;
-    text.trim().parse().ok()
+    pipe.take(32).read_to_string(&mut text).map_err(|_| Unreadable)?;
+    Ok(text.trim().parse().ok())
+}
+
+/// Whether a refused copy must clear the clipboard, from one reading of it:
+/// yes if it shows our value, and yes if it cannot be read, since our
+/// value may be there.
+fn should_withdraw(read: Result<Option<u64>, Unreadable>, generation: u64) -> bool {
+    match read {
+        Ok(Some(g)) => g == generation,
+        Ok(None) => false,
+        Err(Unreadable) => true,
+    }
 }
 
 impl Clipboard {
@@ -121,14 +155,16 @@ impl Clipboard {
         ready_rx.recv().map_err(|_| anyhow!("the clipboard thread stopped"))??;
 
         let start = Instant::now();
-        while published() != Some(generation) {
+        while !matches!(published(), Ok(Some(g)) if g == generation) {
             if start.elapsed() > PUBLISH_TIMEOUT || !alive.load(Ordering::SeqCst) {
                 return Err(anyhow!("the clipboard did not take the copy"));
             }
             std::thread::sleep(Duration::from_millis(3));
         }
         if !allow() {
-            if published() == Some(generation) {
+            // Withdraw our value; if the clipboard cannot be read, clear it
+            // rather than risk leaving the value behind.
+            if should_withdraw(published(), generation) {
                 let _ = copy::clear(ClipboardType::Regular, Seat::All);
             }
             return Err(Refused.into());
@@ -149,32 +185,50 @@ impl Clipboard {
     /// Clears the clipboard if the compositor holds Countersign's value from
     /// `generation`, or our registered value when `generation` is `None`.
     /// Never clears another application's value. Blocking.
-    pub fn clear_if_ours(&self, generation: Option<u64>) -> bool {
+    pub fn clear_if_ours(&self, generation: Option<u64>) -> Clear {
         let mut current = self.current.lock().expect("clipboard state");
         let Some(target) = generation.or_else(|| current.as_ref().map(|o| o.generation)) else {
-            return false;
+            return Clear::NotOurs;
         };
         let registered = current.as_ref().is_some_and(|o| o.generation == target);
-        if published() != Some(target) {
-            if registered {
-                *current = None;
+        match published() {
+            Ok(Some(g)) if g == target => {}
+            Ok(_) => {
+                if registered {
+                    *current = None;
+                }
+                return Clear::NotOurs;
             }
-            return false;
+            // Unknown: keep ownership so the backstop tries again.
+            Err(Unreadable) => return Clear::Failed,
         }
         if let Err(e) = copy::clear(ClipboardType::Regular, Seat::All) {
             tracing::warn!("clearing the clipboard failed: {e}");
-            return false;
+            return Clear::Failed;
         }
         if registered {
             *current = None;
         }
-        true
+        Clear::Cleared
+    }
+
+    /// The generation of the newest copy started, whether or not it finished.
+    pub fn newest(&self) -> u64 {
+        self.generation.load(Ordering::SeqCst)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn refused_copies_clear_when_unsure() {
+        assert!(should_withdraw(Ok(Some(7)), 7));
+        assert!(!should_withdraw(Ok(Some(8)), 7));
+        assert!(!should_withdraw(Ok(None), 7));
+        assert!(should_withdraw(Err(Unreadable), 7));
+    }
 
     fn value(text: &str) -> Zeroizing<String> {
         Zeroizing::new(text.to_owned())
@@ -188,24 +242,24 @@ mod tests {
         let clipboard = Arc::new(Clipboard::default());
         let ttl = Duration::from_secs(10);
         let first = clipboard.copy(value("first"), true, ttl, || true, None).unwrap();
-        assert_eq!(published(), Some(first));
+        assert_eq!(published().unwrap(), Some(first));
 
         // A replacement while the first value is ours succeeds, even though
         // publishing it cancels the first offer.
         let second = clipboard.copy(value("second"), true, ttl, || true, Some(first)).expect("replacement");
-        assert_eq!(published(), Some(second));
+        assert_eq!(published().unwrap(), Some(second));
         assert!(clipboard.is_current(second));
 
         // Replacing a value that is no longer ours, or a refused guard,
         // leaves the current value alone or withdraws the new one.
         assert!(clipboard.copy(value("third"), true, ttl, || true, Some(first)).is_err());
-        assert_eq!(published(), Some(second));
+        assert_eq!(published().unwrap(), Some(second));
         assert!(clipboard.copy(value("fourth"), true, ttl, || false, None).is_err());
-        assert_eq!(published(), None);
+        assert_eq!(published().unwrap(), None);
 
         let last = clipboard.copy(value("fifth"), true, ttl, || true, None).unwrap();
-        assert!(clipboard.clear_if_ours(None));
-        assert_eq!(published(), None);
+        assert_eq!(clipboard.clear_if_ours(None), Clear::Cleared);
+        assert_eq!(published().unwrap(), None);
         assert!(!clipboard.is_current(last));
     }
 }

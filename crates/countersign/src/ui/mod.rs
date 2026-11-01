@@ -1,10 +1,15 @@
 //! Widgets.
 
 pub mod detail;
+pub mod editor;
 pub mod gates;
+pub mod generator;
+pub mod item_actions;
 pub mod items;
+pub mod prefs;
 pub mod quick;
 pub mod reprompt;
+pub mod sends;
 pub mod window;
 
 use countersign_ipc::ItemKind;

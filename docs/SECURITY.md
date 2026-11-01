@@ -22,19 +22,32 @@ server protocol. Those stay in the official CLI.
   socket, then to the CLI in an HTTP body over the socket pair, and cleared
   from the entry. Never in arguments, the environment or files.
 - **Session key.** Returned by the CLI on unlock and held only in the daemon,
-  cleared on lock. It reaches the CLI again only through its environment
-  when the daemon restarts it.
+  cleared on lock. It reaches the CLI again only through the environment of
+  a child the daemon starts: a restarted `bw serve`, or a one-off
+  `bw send list` or `bw send create`.
 - **The CLI's server** listens on no port and no path. Only the daemon holds
   the other end of its socket pair.
 - **The daemon's socket** lives in a folder only you can open, and the daemon
   checks each connection's user id.
 - **Item data.** The app receives items with passwords, codes, card numbers,
   security codes, hidden fields, password history and passkey keys removed.
-  A secret is sent only when you reveal it, and hidden again after a minute.
+  A secret is sent only when you reveal it, and hidden again after a minute,
+  or when you open the item in the editor.
+- **Sends.** The app lists Sends without their text, their key or the access
+  link, which carries the key. The text is sent when you edit a Send; links
+  are copied by the daemon like any other secret. A Send's password goes to
+  the CLI on stdin or in an HTTP body, never in arguments.
 - **Copying** happens inside the daemon. The value never reaches the app.
   Copies carry the password-manager hint so clipboard history skips them,
   and are cleared after the timeout or on lock, but never if another app has
   replaced them since.
+
+## The CLI download
+
+Installing the CLI trusts Bitwarden's GitHub release and HTTPS, and the
+SHA-256 recorded in Countersign's source with each pin; a mismatch is
+refused before anything is extracted or run. Countersign never downloads or
+updates anything in the background.
 
 ## Memory
 
