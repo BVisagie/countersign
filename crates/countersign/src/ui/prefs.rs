@@ -252,8 +252,12 @@ fn build(app: &Rc<App>) -> adw::PreferencesDialog {
         row.connect_active_notify(move |_| apply());
     }
     {
-        let app = app.clone();
-        sign_out.connect_clicked(move |button| confirm_sign_out(&app, button.upcast_ref()));
+        // Weak: the dialog holds this through its button.
+        let (app, dialog) = (app.clone(), dialog.downgrade());
+        sign_out.connect_clicked(move |button| {
+            let closing = dialog.upgrade().map(|d| d.upcast::<adw::Dialog>());
+            confirm_sign_out(&app, button.upcast_ref(), closing);
+        });
     }
     dialog
 }

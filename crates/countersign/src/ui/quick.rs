@@ -387,10 +387,11 @@ impl Quick {
 impl View for Quick {
     fn status_changed(&self, status: &Status) {
         // As in the main window: an unlock form on screen stays, busy,
-        // while the vault opens.
-        let opening = self.app.opening();
+        // while the vault opens, and a sign-out shows its wait.
+        let (opening, signing_out) = (self.app.opening(), self.app.signing_out());
         let showing = self.stack.visible_child_name();
         let page = match (&status.cli, status.vault) {
+            (CliState::Ready { .. }, _) if signing_out => "other",
             (CliState::Ready { .. }, _) if opening => {
                 if showing.as_deref() == Some("locked") {
                     "locked"
@@ -403,6 +404,7 @@ impl View for Quick {
             _ => "other",
         };
         self.other_text.set_label(match status.vault {
+            _ if signing_out => "Signing out…",
             _ if opening => "Opening your vault…",
             VaultState::LoggedOut => "Sign in to Bitwarden in Countersign first.",
             _ => "Countersign is getting ready.",

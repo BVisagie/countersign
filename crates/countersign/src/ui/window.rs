@@ -540,7 +540,7 @@ impl MainWindow {
                 }
             });
         });
-        action("sign-out", |me| confirm_sign_out(&me.app, me.window.upcast_ref()));
+        action("sign-out", |me| confirm_sign_out(&me.app, me.window.upcast_ref(), None));
         {
             let weak = weak.clone();
             let new_item = gio::SimpleAction::new("new-item", Some(glib::VariantTy::STRING));
@@ -1092,10 +1092,12 @@ const VAULT_ACTIONS: [&str; 8] =
 
 /// The page the main window shows for `status`, given the page it shows
 /// now. While the vault opens, an unlock form on screen stays, busy; any
-/// other page gives way to "Opening your vault…".
-fn page_for(status: &Status, opening: bool, showing: Option<&str>) -> &'static str {
+/// other page gives way to "Opening your vault…". A sign-out shows
+/// "Signing out…" until the CLI answers.
+fn page_for(status: &Status, opening: bool, signing_out: bool, showing: Option<&str>) -> &'static str {
     match (&status.cli, status.vault) {
         (CliState::Checking, _) => "loading",
+        (CliState::Ready { .. }, _) if signing_out => "loading",
         (CliState::Ready { .. }, _) if opening => {
             if showing == Some("locked") {
                 "locked"
@@ -1128,11 +1130,17 @@ fn has_text_selection(window: &adw::ApplicationWindow) -> bool {
 
 impl View for MainWindow {
     fn status_changed(&self, status: &Status) {
-        let opening = self.app.opening();
+        let (opening, signing_out) = (self.app.opening(), self.app.signing_out());
         let previous = self.stack.visible_child_name();
-        let page = page_for(status, opening, previous.as_deref());
+        let page = page_for(status, opening, signing_out, previous.as_deref());
         self.stack.set_visible_child_name(page);
-        self.loading_text.set_label(if opening { "Opening your vault…" } else { "" });
+        self.loading_text.set_label(if signing_out {
+            "Signing out…"
+        } else if opening {
+            "Opening your vault…"
+        } else {
+            ""
+        });
         // The vault's shortcuts and menus act only on the vault page.
         for name in VAULT_ACTIONS {
             if let Some(action) = self.window.lookup_action(name).and_downcast::<gio::SimpleAction>() {
@@ -1227,28 +1235,42 @@ mod tests {
         use VaultState::*;
         // Unlocking from the form: the form stays until the vault can show.
         for vault in [Locked, Unlocking, Unlocked] {
-            assert_eq!(page_for(&status(vault), true, Some("locked")), "locked");
+            assert_eq!(page_for(&status(vault), true, false, Some("locked")), "locked");
         }
         // Signing in: the sign-in page gives way, and nothing comes between.
-        assert_eq!(page_for(&status(LoggedOut), true, Some("signin")), "loading");
+        assert_eq!(page_for(&status(LoggedOut), true, false, Some("signin")), "loading");
         for vault in [Locked, Unlocking, Unlocked] {
-            assert_eq!(page_for(&status(vault), true, Some("loading")), "loading");
+            assert_eq!(page_for(&status(vault), true, false, Some("loading")), "loading");
         }
-        assert_eq!(page_for(&status(Unlocked), false, Some("loading")), "vault");
-        assert_eq!(page_for(&status(Unlocked), false, Some("locked")), "vault");
+        assert_eq!(page_for(&status(Unlocked), false, false, Some("loading")), "vault");
+        assert_eq!(page_for(&status(Unlocked), false, false, Some("locked")), "vault");
         // A failed open lands on the form.
-        assert_eq!(page_for(&status(Locked), false, Some("loading")), "locked");
-        assert_eq!(page_for(&status(Locked), false, Some("locked")), "locked");
-        assert_eq!(page_for(&status(LoggedOut), false, Some("loading")), "signin");
+        assert_eq!(page_for(&status(Locked), false, false, Some("loading")), "locked");
+        assert_eq!(page_for(&status(Locked), false, false, Some("locked")), "locked");
+        assert_eq!(page_for(&status(LoggedOut), false, false, Some("loading")), "signin");
+    }
+
+    #[test]
+    fn a_sign_out_shows_its_wait_instead_of_the_unlock_form() {
+        use VaultState::*;
+        // The daemon reports the vault locked before the CLI has signed out.
+        for (vault, showing) in
+            [(Unlocked, "vault"), (Locked, "vault"), (Locked, "locked"), (LoggedOut, "loading")]
+        {
+            assert_eq!(page_for(&status(vault), false, true, Some(showing)), "loading");
+        }
+        // Once it answers: signed out, or still locked if it failed.
+        assert_eq!(page_for(&status(LoggedOut), false, false, Some("loading")), "signin");
+        assert_eq!(page_for(&status(Locked), false, false, Some("loading")), "locked");
     }
 
     #[test]
     fn the_cli_comes_first() {
         let mut checking = status(VaultState::Unlocking);
         checking.cli = CliState::Checking;
-        assert_eq!(page_for(&checking, true, Some("locked")), "loading");
+        assert_eq!(page_for(&checking, true, false, Some("locked")), "loading");
         let mut missing = status(VaultState::Unlocking);
         missing.cli = CliState::Missing;
-        assert_eq!(page_for(&missing, true, Some("locked")), "setup");
+        assert_eq!(page_for(&missing, true, false, Some("locked")), "setup");
     }
 }
