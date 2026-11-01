@@ -207,9 +207,11 @@ pub struct SignIn {
     from_status: Cell<bool>,
 }
 
-const EU_SERVER: &str = "https://vault.bitwarden.eu";
-
-const SERVERS: [(&str, &str); 3] = [("us", "US cloud"), ("eu", "EU cloud"), ("self", "Self-hosted")];
+const SERVERS: [(&str, &str, Option<&str>); 3] = [
+    ("us", "US cloud", None),
+    ("eu", "EU cloud", Some("https://vault.bitwarden.eu")),
+    ("self", "Self-hosted", None),
+];
 
 impl SignIn {
     pub fn new(app: &Rc<App>) -> Rc<Self> {
@@ -225,7 +227,7 @@ impl SignIn {
         body.set_justify(gtk::Justification::Center);
         body.set_halign(gtk::Align::Center);
         let server = adw::ToggleGroup::new();
-        for (name, text) in SERVERS {
+        for (name, text, _) in SERVERS {
             server.add(adw::Toggle::builder().name(name).label(text).build());
         }
         server.set_active_name(Some("us"));
@@ -438,7 +440,7 @@ impl SignIn {
         self.error.set_visible(false);
         let choice = self.server.active_name();
         let url = match choice.as_deref() {
-            Some("eu") => Some(EU_SERVER.to_owned()),
+            Some("eu") => Some("https://vault.bitwarden.eu".to_owned()),
             Some("self") => Some(self.custom.text().trim().to_owned()),
             _ => None,
         };
@@ -473,7 +475,7 @@ impl SignIn {
     pub fn set_status(&self, status: &Status) {
         let name = match status.server_url.as_deref().map(|u| u.trim_end_matches('/')) {
             None | Some("https://vault.bitwarden.com") => "us",
-            Some(EU_SERVER) => "eu",
+            Some("https://vault.bitwarden.eu") => "eu",
             Some(other) => {
                 if self.custom.text().is_empty() {
                     self.custom.set_text(other);

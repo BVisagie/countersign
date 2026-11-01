@@ -65,18 +65,18 @@ pub async fn login(app: &Rc<App>, parent: &gtk::Widget, launch: TerminalLaunch) 
     let failure: Rc<RefCell<Option<String>>> = Rc::default();
     let child: Rc<Cell<Option<glib::Pid>>> = Rc::default();
     let exited = Rc::new(Cell::new(false));
+    let dismissed = Rc::new(Cell::new(false));
     let (closed_tx, closed) = async_channel::bounded::<()>(1);
     {
-        let (child, exited) = (child.clone(), exited.clone());
+        let (child, exited, dismissed) = (child.clone(), exited.clone(), dismissed.clone());
         dialog.connect_closed(move |_| {
             // Closing the dialog ends a sign-in still in progress, so a
             // second one cannot run beside it.
+            dismissed.set(true);
             if !exited.get()
                 && let Some(pid) = child.get()
             {
-                // SAFETY: kill has no memory effects. The child has not been
-                // reaped yet, so the pid is still its own.
-                unsafe { libc::kill(pid.0, libc::SIGHUP) };
+                hang_up(pid);
             }
             let _ = closed_tx.try_send(());
         });
@@ -113,6 +113,8 @@ pub async fn login(app: &Rc<App>, parent: &gtk::Widget, launch: TerminalLaunch) 
             -1,
             gtk::gio::Cancellable::NONE,
             move |result| match result {
+                // Closed before the CLI started: end it at once.
+                Ok(pid) if dismissed.get() => hang_up(pid),
                 Ok(pid) => child.set(Some(pid)),
                 Err(e) => {
                     *failure.borrow_mut() =
@@ -164,6 +166,14 @@ pub async fn login(app: &Rc<App>, parent: &gtk::Widget, launch: TerminalLaunch) 
         Some(message) => Err(message),
         None => Ok(Login::Closed),
     }
+}
+
+/// Ends the sign-in CLI, which has not been reaped yet, so the pid is still
+/// its own.
+#[cfg(feature = "terminal")]
+fn hang_up(pid: gtk::glib::Pid) {
+    // SAFETY: kill has no memory effects.
+    unsafe { libc::kill(pid.0, libc::SIGHUP) };
 }
 
 /// VTE's flag for spawning without the parent environment
