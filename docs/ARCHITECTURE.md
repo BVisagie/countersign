@@ -103,7 +103,8 @@ notification, withdrawn when the value is cleared.
 The theme reads `colors.toml` from the active Omarchy theme, maps it onto
 libadwaita's color variables, matches Hyprland's `decoration:rounding`, and
 reloads when the theme folder changes. Without Omarchy, libadwaita's own look
-remains.
+remains. The mascot is built into the app as symbolic icons (`build.rs`,
+`data/icons`), which GTK draws in the theme's colors.
 
 `COUNTERSIGN_DEMO=1` swaps the daemon for a fictional in-process vault, which
 the screenshot script and UI work use.

@@ -62,4 +62,6 @@ unavailable.
 
 `COUNTERSIGN_DEMO=1` runs the app on a fictional vault without the CLI.
 `scripts/screenshots.sh` renders screenshots offscreen from that vault; use it
-for every image in the repository.
+for every screenshot in the repository. The icon and mascot are hand-made SVG
+in `data/icons/`; its `README.md` has their rules. Inside the app, the mascot
+is always a one-color symbolic icon that takes the theme's color.

@@ -18,6 +18,7 @@ install -Dm755 target/release/countersign "$bin/countersign"
 install -Dm755 target/release/countersignd "$bin/countersignd"
 install -Dm644 data/io.github.bvisagie.Countersign.desktop "$data/applications/io.github.bvisagie.Countersign.desktop"
 install -Dm644 data/icons/io.github.bvisagie.Countersign.svg "$data/icons/hicolor/scalable/apps/io.github.bvisagie.Countersign.svg"
+install -Dm644 data/icons/io.github.bvisagie.Countersign-symbolic.svg "$data/icons/hicolor/symbolic/apps/io.github.bvisagie.Countersign-symbolic.svg"
 
 cat <<'NEXT'
 Installed. To open quick access with a key and start Countersign with Hyprland, add:
