@@ -44,7 +44,10 @@ pub async fn install(daemon: &Arc<Daemon>) -> Result<(), IpcError> {
         Ok(()) if daemon.settings().cli_path.is_some() => {
             let settings = countersign_ipc::Settings { cli_path: None, ..daemon.settings() };
             if let Err(e) = crate::settings::save(&daemon.paths.settings_file, &settings) {
-                tracing::warn!("saving settings failed: {e}");
+                daemon.refresh().await;
+                return Err(failed(format!(
+                    "The CLI is installed, but switching to it failed: {e}. Choose it in Settings."
+                )));
             }
             daemon.set_settings(settings);
         }
@@ -97,7 +100,13 @@ async fn run(root: &Path) -> Result<(), IpcError> {
     if target_dir.exists() {
         fs::rename(&target_dir, &old).map_err(|e| failed(e.to_string()))?;
     }
-    fs::rename(&next, &target_dir).map_err(|e| failed(format!("Cannot install the CLI: {e}")))?;
+    if let Err(e) = fs::rename(&next, &target_dir) {
+        // Put the previous copy back rather than lose it with the staging folder.
+        if old.exists() {
+            let _ = fs::rename(&old, &target_dir);
+        }
+        return Err(failed(format!("Cannot install the CLI: {e}")));
+    }
     tracing::info!("installed the official Bitwarden CLI {PINNED_VERSION}");
     Ok(())
 }

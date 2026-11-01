@@ -106,7 +106,8 @@ impl View for TrayIcon {
 pub fn start(app: &Rc<App>) -> Option<Rc<TrayIcon>> {
     let (actions, incoming) = async_channel::unbounded();
     let unlocked = app.status.borrow().vault == VaultState::Unlocked;
-    let handle = match (CountersignTray { unlocked, actions }).spawn() {
+    // The bar's tray host may start after Countersign; register anyway.
+    let handle = match (CountersignTray { unlocked, actions }).assume_sni_available(true).spawn() {
         Ok(handle) => handle,
         Err(e) => {
             eprintln!("countersign: no tray icon: {e}");

@@ -139,8 +139,10 @@ impl Daemon {
         self.settings.subscribe()
     }
 
+    /// Applies new settings and tells every connected app.
     pub(crate) fn set_settings(&self, settings: Settings) {
-        self.settings.send_replace(settings);
+        self.settings.send_replace(settings.clone());
+        let _ = self.events.send(Event::Settings { settings });
     }
 
     pub(crate) fn update_status(&self, change: impl FnOnce(&mut Status)) {

@@ -166,6 +166,7 @@ impl App {
             Some(Event::Status { status }) => self.set_status(status),
             Some(Event::VaultChanged) => self.schedule_vault_reload(),
             Some(Event::Recent { ids }) => *self.recent.borrow_mut() = ids,
+            Some(Event::Settings { settings }) => *self.settings.borrow_mut() = settings,
             Some(Event::Clipboard { clipboard }) => {
                 self.each_view(|v| v.clipboard(&clipboard));
                 self.notify_clipboard(&clipboard);
@@ -289,10 +290,10 @@ impl App {
         if std::env::var_os("COUNTERSIGN_SCREENSHOT").is_some() {
             return;
         }
-        if crate::ui::window::current().is_some_and(|w| w.window.is_active()) {
-            return;
-        }
-        if event.state == ClipboardState::Cleared {
+        // The main window shows its own receipt, so an earlier notification
+        // is out of date once it is focused, as it is once the value clears.
+        let focused = crate::ui::window::current().is_some_and(|w| w.window.is_active());
+        if event.state == ClipboardState::Cleared || focused {
             self.gtk.withdraw_notification(ID);
             return;
         }

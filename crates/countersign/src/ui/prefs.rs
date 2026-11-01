@@ -66,8 +66,26 @@ fn build(app: &Rc<App>) -> adw::PreferencesDialog {
         "After you copy a password, its one-time code replaces it",
         settings.totp_follow_up,
     );
-    let follow_delay = spin("Code follows after", "Seconds", 1.0, 120.0, settings.totp_follow_up_secs);
+    // The code must follow before the password clears, as the daemon
+    // enforces; keep the control within that range.
+    let longest = |clear: u32| f64::from(clear.saturating_sub(1).max(1));
+    let follow_delay = spin(
+        "Code follows after",
+        "Seconds",
+        1.0,
+        longest(settings.clipboard_clear_secs),
+        settings.totp_follow_up_secs,
+    );
     follow.bind_property("active", &follow_delay, "sensitive").sync_create().build();
+    {
+        let follow_delay = follow_delay.clone();
+        clear.connect_value_notify(move |clear| {
+            follow_delay.adjustment().set_upper(longest(clear.value() as u32));
+            if follow_delay.value() > follow_delay.adjustment().upper() {
+                follow_delay.set_value(follow_delay.adjustment().upper());
+            }
+        });
+    }
     clipboard.add(&clear);
     clipboard.add(&follow);
     clipboard.add(&follow_delay);
@@ -139,6 +157,23 @@ fn build(app: &Rc<App>) -> adw::PreferencesDialog {
     };
     let cli_row = adw::ActionRow::builder().title(cli_title).subtitle(cli_subtitle).build();
     cli.add(&cli_row);
+    let choose =
+        gtk::Button::builder().label("Use a CLI on this computer…").valign(gtk::Align::Center).build();
+    cli_row.add_suffix(&choose);
+    {
+        let (app, dialog) = (app.clone(), dialog.clone());
+        choose.connect_clicked(move |button| {
+            let window = button.root().and_downcast::<gtk::Window>();
+            let chooser = gtk::FileDialog::builder().title("Choose the Bitwarden CLI").build();
+            let (app, dialog) = (app.clone(), dialog.clone());
+            glib::spawn_future_local(async move {
+                let Ok(file) = chooser.open_future(window.as_ref()).await else { return };
+                let Some(path) = file.path() else { return };
+                save(&app, Settings { cli_path: Some(path), ..app.settings.borrow().clone() });
+                dialog.close();
+            });
+        });
+    }
     if settings.cli_path.is_some() {
         let managed = gtk::Button::builder().label("Use the managed CLI").valign(gtk::Align::Center).build();
         cli_row.add_suffix(&managed);
@@ -186,11 +221,13 @@ fn build(app: &Rc<App>) -> adw::PreferencesDialog {
                 close_to_background: background.is_active(),
                 ..current.clone()
             };
-            if next == current {
-                return;
-            }
+            // A newer value replaces any save still waiting, including a
+            // change back to what is already stored.
             if let Some(source) = pending.borrow_mut().take() {
                 source.remove();
+            }
+            if next == current {
+                return;
             }
             let (app, slot) = (app.clone(), pending.clone());
             let source = glib::timeout_add_local_once(Duration::from_millis(300), move || {

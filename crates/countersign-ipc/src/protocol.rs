@@ -218,6 +218,10 @@ pub enum Event {
     },
     /// Items, folders or Sends changed; refresh what is shown.
     VaultChanged,
+    /// Settings changed, for example after installing the CLI.
+    Settings {
+        settings: Settings,
+    },
     /// The most recently copied item ids changed, newest first.
     Recent {
         ids: Vec<String>,
