@@ -5,6 +5,10 @@
 //! succeeds, the session key `bw login --raw` prints is handed to the daemon
 //! so the vault opens without typing the password twice; the terminal is
 //! then wiped. Without the feature, your own terminal runs `bw login`.
+//!
+//! The embedded terminal pastes the clipboard with the keys a text field
+//! uses, and from a button, one line at a time: a paste never presses Enter
+//! or answers a later prompt.
 
 use std::rc::Rc;
 
@@ -58,8 +62,19 @@ pub async fn login(app: &Rc<App>, parent: &gtk::Widget, launch: TerminalLaunch) 
     frame.set_margin_end(12);
     frame.set_margin_bottom(12);
     frame.append(&overlay);
+    let title = adw::WindowTitle::new("Sign in with the Bitwarden CLI", "");
+    let paste_button = gtk::Button::builder()
+        .icon_name("edit-paste-symbolic")
+        .tooltip_text("Paste (Ctrl+V)")
+        .focus_on_click(false)
+        .sensitive(false)
+        .build();
+    paste_button.update_property(&[gtk::accessible::Property::Label("Paste")]);
+    let header = adw::HeaderBar::new();
+    header.set_title_widget(Some(&title));
+    header.pack_start(&paste_button);
     let view = adw::ToolbarView::new();
-    view.add_top_bar(&adw::HeaderBar::new());
+    view.add_top_bar(&header);
     view.set_content(Some(&frame));
     let dialog = adw::Dialog::builder().title("Sign in with the Bitwarden CLI").child(&view).build();
     let failure: Rc<RefCell<Option<String>>> = Rc::default();
@@ -82,7 +97,7 @@ pub async fn login(app: &Rc<App>, parent: &gtk::Widget, launch: TerminalLaunch) 
         });
     }
     {
-        let (notice, exited) = (notice.clone(), exited.clone());
+        let (notice, exited, paste_button) = (notice.clone(), exited.clone(), paste_button.clone());
         terminal.connect_contents_changed(move |terminal| {
             // The CLI sends control sequences before its first prompt, and
             // VTE reports those as changes too: wait for visible text.
@@ -91,8 +106,62 @@ pub async fn login(app: &Rc<App>, parent: &gtk::Widget, launch: TerminalLaunch) 
                 notice.set_visible(false);
                 terminal.set_opacity(1.0);
                 terminal.grab_focus();
+                paste_button.set_sensitive(true);
             }
         });
+    }
+    let paste = {
+        // Weak: the terminal holds this through its shortcuts.
+        let (terminal, title, notice, exited) =
+            (terminal.downgrade(), title.downgrade(), notice.downgrade(), exited.clone());
+        Rc::new(move || {
+            let (terminal, title, notice, exited) =
+                (terminal.clone(), title.clone(), notice.clone(), exited.clone());
+            glib::spawn_future_local(async move {
+                let Some(clipboard) = terminal.upgrade().map(|t| t.clipboard()) else { return };
+                let text = clipboard.read_text_future().await.ok().flatten();
+                let text = zeroize::Zeroizing::new(text.map(|t| t.to_string()).unwrap_or_default());
+                let (Some(terminal), Some(title), Some(notice)) =
+                    (terminal.upgrade(), title.upgrade(), notice.upgrade())
+                else {
+                    return;
+                };
+                // Only into a prompt the CLI is showing.
+                if exited.get() || notice.is_visible() {
+                    return;
+                }
+                let (line, more) = first_line(&text);
+                let message = if line.is_empty() {
+                    "The clipboard has no text"
+                } else {
+                    terminal.paste_text(line);
+                    if more { "Pasted the first line of the clipboard" } else { "Pasted from the clipboard" }
+                };
+                terminal.grab_focus();
+                flash(&title, message);
+            });
+        })
+    };
+    {
+        let paste = paste.clone();
+        paste_button.connect_clicked(move |_| paste());
+    }
+    {
+        // Ahead of VTE, which sends Ctrl+V to the CLI as a character it
+        // ignores and pastes the selection, not the clipboard, on Shift+Insert.
+        // Omarchy's Super+V sends Ctrl+V.
+        let shortcuts = gtk::ShortcutController::new();
+        shortcuts.set_propagation_phase(gtk::PropagationPhase::Capture);
+        for accel in ["<Control>v", "<Control><Shift>v", "<Shift>Insert", "<Control><Shift>Insert"] {
+            let paste = paste.clone();
+            let action = gtk::CallbackAction::new(move |_, _| {
+                paste();
+                glib::Propagation::Stop
+            });
+            shortcuts
+                .add_shortcut(gtk::Shortcut::new(gtk::ShortcutTrigger::parse_string(accel), Some(action)));
+        }
+        terminal.add_controller(shortcuts);
     }
 
     let mut argv: Vec<String> = vec![launch.program.to_string_lossy().into_owned()];
@@ -134,6 +203,7 @@ pub async fn login(app: &Rc<App>, parent: &gtk::Widget, launch: TerminalLaunch) 
         let (app, dialog) = (app.clone(), dialog.downgrade());
         terminal.connect_child_exited(move |terminal, status| {
             exited.set(true);
+            paste_button.set_sensitive(false);
             let session =
                 (status == 0).then(|| terminal.text_format(vte4::Format::Text)).flatten().and_then(|text| {
                     text.lines().rev().map(str::trim).find(|l| !l.is_empty()).map(str::to_owned)
@@ -171,6 +241,35 @@ pub async fn login(app: &Rc<App>, parent: &gtk::Widget, launch: TerminalLaunch) 
     }
 }
 
+/// The clipboard's first line of text, without line breaks, and whether
+/// more text followed. VTE would send each line break as Enter.
+#[cfg(feature = "terminal")]
+fn first_line(text: &str) -> (&str, bool) {
+    let text = text.trim_start_matches(['\r', '\n']);
+    match text.find(['\r', '\n']) {
+        Some(end) => (&text[..end], !text[end..].trim().is_empty()),
+        None => (text, false),
+    }
+}
+
+/// Shows `message` under the dialog's title for a few seconds.
+#[cfg(feature = "terminal")]
+fn flash(title: &adw::WindowTitle, message: &str) {
+    use adw::prelude::*;
+    use gtk::glib;
+
+    title.set_subtitle(message);
+    let (title, message) = (title.downgrade(), message.to_owned());
+    glib::timeout_add_local_once(std::time::Duration::from_secs(3), move || {
+        // A newer message keeps its own time.
+        if let Some(title) = title.upgrade()
+            && title.subtitle() == message
+        {
+            title.set_subtitle("");
+        }
+    });
+}
+
 /// Ends the sign-in CLI, which has not been reaped yet, so the pid is still
 /// its own.
 #[cfg(feature = "terminal")]
@@ -197,5 +296,21 @@ pub async fn login(_app: &Rc<App>, _parent: &gtk::Widget, launch: TerminalLaunch
     match command.spawn() {
         Ok(_) => Ok(Login::External),
         Err(e) => Err(format!("Cannot open a terminal: {e}")),
+    }
+}
+
+#[cfg(all(test, feature = "terminal"))]
+mod tests {
+    use super::first_line;
+
+    #[test]
+    fn pastes_one_line_without_its_line_break() {
+        assert_eq!(first_line("correct horse "), ("correct horse ", false));
+        assert_eq!(first_line("secret\n"), ("secret", false));
+        assert_eq!(first_line("secret\r\n"), ("secret", false));
+        assert_eq!(first_line("secret\nsomething else"), ("secret", true));
+        assert_eq!(first_line("\r\n\nsecret\n"), ("secret", false));
+        assert_eq!(first_line("\n\n"), ("", false));
+        assert_eq!(first_line(""), ("", false));
     }
 }
