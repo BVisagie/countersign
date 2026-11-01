@@ -18,6 +18,11 @@
      master password.
 3. **Unlock** with your master password.
 
+Opening the vault can take a few seconds, longest the first time. Until it
+opens, or Countersign asks you to try again, the unlock form, quick access
+and the vault's shortcuts take no input. Quitting still works, and locks the
+vault.
+
 Your session lives in Countersign's background service, `countersignd`,
 which the app starts when needed. The app receives secrets only to show or
 edit them: an item's notes and live verification code when you open it, a
