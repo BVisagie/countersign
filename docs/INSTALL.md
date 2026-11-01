@@ -109,8 +109,9 @@ Countersign uses the first of:
 The minimum, 2026.10.0, is the oldest release Countersign has been tested
 against. There is no maximum: newer releases are accepted. The copy
 Countersign installs is pinned to one release, because its checksum is
-recorded in Countersign's source; it changes only when a Countersign update
-raises the pin.
+recorded in Countersign's source. A Countersign update can raise the pin,
+but Countersign keeps using the copy it installed before; installing the
+newer release from Settings is [on the roadmap](PLAN.md#next).
 
 ### Your own `bw` stays separate
 

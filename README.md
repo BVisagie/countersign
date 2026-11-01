@@ -46,8 +46,8 @@ Screenshots use a fictional demo vault; see `scripts/screenshots.sh`.
 
 ## Status
 
-Under active development; not released yet. See [the plan](docs/PLAN.md) for
-what each milestone delivers and [M0 results](docs/M0-RESULTS.md) for the
+Milestones M0 to M3 of [the plan](docs/PLAN.md) are done; not released yet.
+The plan lists what comes next. [M0 results](docs/M0-RESULTS.md) has the
 measured performance.
 
 ## Quick start

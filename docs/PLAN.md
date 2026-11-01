@@ -20,14 +20,38 @@ project: fast, good-looking and stable, or not built at all.
 
 ## Milestones
 
-| Milestone | Delivers |
-| --- | --- |
-| M0 | Foundation and feasibility gates: CLI adapter and contract test, daemon, protocol, the GTK app on real data, Omarchy theming, measured performance, screenshots |
-| M1 | Replaces the Warden plugin: managed CLI install, embedded sign-in, unlock, quick access with code-after-password, clipboard expiry, inactivity, screen-lock and sleep locks, tray, Hyprland binding, settings |
-| M2 | The full vault window: every item type, folders, collections, organizations, live codes, reveal, password history, attachment download, generator, sync status |
-| M3 | Editing and Send: create, edit and delete items and folders, custom fields, websites, attachments, moving to an organization, text and file Sends |
+| Milestone | Delivers | Status |
+| --- | --- | --- |
+| M0 | Foundation and feasibility gates: CLI adapter and contract test, daemon, protocol, the GTK app on real data, Omarchy theming, measured performance, screenshots | Done (#1) |
+| M1 | Replaces the Warden plugin: managed CLI install, embedded sign-in, unlock, quick access with code-after-password, clipboard expiry, inactivity, screen-lock and sleep locks, tray, Hyprland binding, settings | Done (#2) |
+| M2 | The full vault window: every item type, folders, collections, organizations, live codes, reveal, password history, attachment download, generator, sync status | Done (#3) |
+| M3 | Editing and Send: create, edit and delete items and folders, custom fields, websites, attachments, moving to an organization, text and file Sends | Done (#4) |
 
-Later, not in this plan: auto-type, an SSH agent, polkit or fingerprint quick
+M0–M3 reached `main` on 1 November 2026 (#5).
+
+## Next
+
+Known follow-ups, not yet scheduled:
+
+- **Manual testing on a Premium account:** verification codes and the code
+  after the password, attachments, and file Sends. Also in-app sign-in with
+  `vte4`, which the development machine does not have.
+- **Installing a newer pinned CLI.** When a Countersign update raises the
+  pinned release, Countersign keeps using the copy it installed before, and
+  offers no way to install the new one. Settings should offer it.
+- **zbus 6**, once the tray library `ksni` moves to it. The daemon stays on
+  zbus 5 until then, so the workspace builds one zbus, not two.
+- **SSH keys:** creating them, and changing their key material, if the
+  official CLI gains key generation or import.
+- **Edits right after unlocking.** The sync that starts at unlock was seen
+  once to show an edit's old value until the next sync; the server had the
+  new one.
+- **A CI build on the minimum Rust version**, so `rust-version` cannot fall
+  behind what the dependencies need again.
+
+## Later
+
+Not in this plan: auto-type, an SSH agent, polkit or fingerprint quick
 unlock, multiple accounts, import and export, a native sign-in form,
 packaging.
 
