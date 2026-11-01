@@ -1,14 +1,16 @@
 //! What Countersign shows before the vault is open: setting up the CLI,
 //! signing in and unlocking.
 
+use std::cell::Cell;
 use std::rc::Rc;
 
 use adw::prelude::*;
-use countersign_ipc::{CliState, ErrorCode, Request, Response, Secret, Settings, Status};
+use countersign_ipc::{CliState, ErrorCode, Request, Response, Secret, Settings, Status, VaultState};
 use gtk::glib;
 
 use super::label;
 use crate::app::App;
+use crate::terminal::Login;
 
 fn gate_box() -> gtk::Box {
     let column = gtk::Box::new(gtk::Orientation::Vertical, 12);
@@ -21,6 +23,24 @@ fn gate_box() -> gtk::Box {
 
 fn wrap(widget: &impl IsA<gtk::Widget>) -> gtk::Widget {
     adw::Clamp::builder().maximum_size(420).child(widget).build().upcast()
+}
+
+/// A button whose label makes room for a spinner while its work runs.
+fn busy_button(text: &str, classes: &[&str]) -> gtk::Button {
+    let content = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    content.set_halign(gtk::Align::Center);
+    content.append(&gtk::Label::new(Some(text)));
+    gtk::Button::builder().css_classes(classes.to_vec()).child(&content).build()
+}
+
+/// Shows or hides the spinner in a [`busy_button`].
+fn set_button_busy(button: &gtk::Button, busy: bool) {
+    let Some(content) = button.child().and_downcast::<gtk::Box>() else { return };
+    match (busy, content.first_child().and_downcast::<adw::Spinner>()) {
+        (true, None) => content.prepend(&adw::Spinner::new()),
+        (false, Some(spinner)) => content.remove(&spinner),
+        _ => {}
+    }
 }
 
 fn mark() -> gtk::Label {
@@ -61,11 +81,7 @@ impl Unlock {
         let error = label("", &["cs-error"]);
         error.set_visible(false);
         error.set_wrap(true);
-        let button = gtk::Button::builder().label("Unlock").css_classes(["suggested-action", "pill"]).build();
-        let content = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-        content.set_halign(gtk::Align::Center);
-        content.append(&gtk::Label::new(Some("Unlock")));
-        button.set_child(Some(&content));
+        let button = busy_button("Unlock", &["suggested-action", "pill"]);
         let sign_out =
             gtk::Button::builder().label("Sign out").css_classes(["flat"]).halign(gtk::Align::Center).build();
         column.append(&title);
@@ -124,13 +140,7 @@ impl Unlock {
     fn set_busy(&self, busy: bool) {
         self.entry.set_sensitive(!busy);
         self.button.set_sensitive(!busy);
-        if let Some(content) = self.button.child().and_downcast::<gtk::Box>() {
-            if busy && content.first_child().and_downcast::<adw::Spinner>().is_none() {
-                content.prepend(&adw::Spinner::new());
-            } else if !busy && let Some(spinner) = content.first_child().and_downcast::<adw::Spinner>() {
-                content.remove(&spinner);
-            }
-        }
+        set_button_busy(&self.button, busy);
         if busy {
             self.error.set_visible(false);
         }
@@ -174,12 +184,27 @@ pub fn confirm_sign_out(app: &Rc<App>, parent: &gtk::Widget) {
 }
 
 /// Choosing a server and signing in with the official CLI.
+///
+/// Every step waits on the CLI, so the page shows what is running and
+/// accepts no second sign-in until the first ends.
 pub struct SignIn {
     pub root: gtk::Widget,
     server: adw::ToggleGroup,
     custom: gtk::Entry,
+    email: gtk::Button,
+    api_key: gtk::Button,
     error: gtk::Label,
+    progress_spinner: adw::Spinner,
+    progress_text: gtk::Label,
     waiting: gtk::Box,
+    /// A sign-in the user started is running, or its terminal is open.
+    busy: Cell<bool>,
+    /// The CLI is being pointed at the chosen cloud.
+    switching: Cell<bool>,
+    /// The choice changed while a switch ran.
+    switch_again: Cell<bool>,
+    /// The selector is following the daemon's status, not the user.
+    from_status: Cell<bool>,
 }
 
 const SERVERS: [(&str, &str, Option<&str>); 3] = [
@@ -210,26 +235,26 @@ impl SignIn {
         let custom =
             gtk::Entry::builder().placeholder_text("https://vault.example.com").visible(false).build();
         custom.update_property(&[gtk::accessible::Property::Label("Self-hosted server address")]);
-        {
-            let custom = custom.clone();
-            server.connect_active_name_notify(move |g| {
-                custom.set_visible(g.active_name().as_deref() == Some("self"))
-            });
-        }
-        let email = gtk::Button::builder()
-            .label("Sign in with email")
-            .css_classes(["suggested-action", "pill"])
-            .build();
-        let api_key = gtk::Button::builder().label("Use an API key").css_classes(["flat"]).build();
+        let email = busy_button("Sign in with email", &["suggested-action", "pill"]);
+        let api_key = busy_button("Use an API key", &["flat"]);
         let error = label("", &["cs-error"]);
         error.set_visible(false);
         error.set_wrap(true);
+        // Always laid out, so the centred page does not move as it shows.
+        let progress = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        progress.set_halign(gtk::Align::Center);
+        let progress_spinner = adw::Spinner::new();
+        progress_spinner.set_visible(false);
+        let progress_text = label("", &["cs-meta"]);
+        progress_text.set_wrap(true);
+        progress.append(&progress_spinner);
+        progress.append(&progress_text);
         let waiting = gtk::Box::new(gtk::Orientation::Vertical, 8);
         waiting.set_visible(false);
         let waiting_text =
             label("Finish signing in in the terminal window, then come back here.", &["cs-gate-body"]);
         waiting_text.set_wrap(true);
-        let done = gtk::Button::builder().label("I've signed in").css_classes(["pill"]).build();
+        let done = busy_button("I've signed in", &["pill"]);
         waiting.append(&waiting_text);
         waiting.append(&done);
 
@@ -239,36 +264,99 @@ impl SignIn {
         column.append(&custom);
         column.append(&email);
         column.append(&api_key);
+        column.append(&progress);
         column.append(&error);
         column.append(&waiting);
-        let sign_in = Rc::new(SignIn { root: wrap(&column), server, custom, error, waiting });
+        let sign_in = Rc::new(SignIn {
+            root: wrap(&column),
+            server,
+            custom,
+            email,
+            api_key,
+            error,
+            progress_spinner,
+            progress_text,
+            waiting,
+            busy: Cell::new(false),
+            switching: Cell::new(false),
+            switch_again: Cell::new(false),
+            from_status: Cell::new(false),
+        });
 
         {
             let (app, me) = (app.clone(), Rc::downgrade(&sign_in));
-            email.connect_clicked(move |button| {
+            sign_in.server.connect_active_name_notify(move |group| {
                 let Some(me) = me.upgrade() else { return };
+                let self_hosted = group.active_name().as_deref() == Some("self");
+                me.custom.set_visible(self_hosted);
+                // A self-hosted address is applied once it is typed.
+                if !self_hosted && !me.from_status.get() {
+                    me.switch_server(&app);
+                }
+            });
+        }
+        {
+            let (app, me) = (app.clone(), Rc::downgrade(&sign_in));
+            sign_in.custom.connect_activate(move |_| {
+                if let Some(me) = me.upgrade() {
+                    me.switch_server(&app);
+                }
+            });
+        }
+        {
+            let (app, me) = (app.clone(), Rc::downgrade(&sign_in));
+            sign_in.email.connect_clicked(move |button| {
+                let Some(me) = me.upgrade() else { return };
+                if !me.begin(button, "Starting the Bitwarden CLI…") {
+                    return;
+                }
                 let (app, button) = (app.clone(), button.clone());
                 glib::spawn_future_local(async move {
-                    if !me.apply_server(&app).await {
-                        return;
-                    }
-                    match app.request(Request::LoginTerminal).await {
-                        Ok(Response::Terminal { launch }) => {
-                            crate::terminal::login(&app, button.upcast_ref(), launch, me.waiting.clone())
+                    if me.apply_server(&app).await {
+                        me.show_progress(Some("Starting the Bitwarden CLI…"), false);
+                        match app.request(Request::LoginTerminal).await {
+                            Ok(Response::Terminal { launch }) => {
+                                match crate::terminal::login(&app, button.upcast_ref(), launch).await {
+                                    Ok(Login::Closed) => {}
+                                    Ok(Login::External) => me.waiting.set_visible(true),
+                                    Err(message) => me.show_error(&message),
+                                }
+                            }
+                            Ok(_) => {}
+                            Err(e) => me.show_error(&e.message),
                         }
-                        Ok(_) => {}
-                        Err(e) => me.show_error(&e.message),
                     }
+                    me.end(&button);
                 });
             });
         }
         {
-            let app = app.clone();
-            done.connect_clicked(move |_| app.fire(Request::LoginFinished { session: None }));
+            let (app, me) = (app.clone(), Rc::downgrade(&sign_in));
+            done.connect_clicked(move |button| {
+                let Some(me) = me.upgrade() else { return };
+                me.error.set_visible(false);
+                button.set_sensitive(false);
+                set_button_busy(button, true);
+                let (app, button) = (app.clone(), button.clone());
+                glib::spawn_future_local(async move {
+                    let result = app.request(Request::LoginFinished { session: None }).await;
+                    set_button_busy(&button, false);
+                    button.set_sensitive(true);
+                    me.waiting.set_visible(false);
+                    match result {
+                        Ok(Response::Status { status }) if status.vault == VaultState::LoggedOut => {
+                            me.show_error("You're not signed in yet. Sign in with email to try again.")
+                        }
+                        Ok(_) => {}
+                        Err(e) => me.show_error(&e.message),
+                    }
+                    me.update();
+                });
+            });
         }
         {
             let (app, me) = (app.clone(), Rc::downgrade(&sign_in));
-            api_key.connect_clicked(move |button| {
+            sign_in.api_key.connect_clicked(move |button| {
                 let Some(me) = me.upgrade() else { return };
                 me.ask_api_key(&app, button.upcast_ref());
             });
@@ -281,10 +369,77 @@ impl SignIn {
         self.error.set_visible(true);
     }
 
-    /// Sends the chosen server to the CLI. False if the address is invalid.
+    /// Says what is running, or hides the line. The spinner is for work no
+    /// button shows.
+    fn show_progress(&self, text: Option<&str>, spinner: bool) {
+        self.progress_text.set_label(text.unwrap_or(""));
+        self.progress_spinner.set_visible(spinner && text.is_some());
+    }
+
+    /// Makes the controls match what is running. The cloud can still be
+    /// changed during a switch; the latest choice wins.
+    fn update(&self) {
+        let open = !self.busy.get() && !self.waiting.is_visible();
+        let ready = open && !self.switching.get();
+        self.server.set_sensitive(open);
+        self.custom.set_sensitive(ready);
+        self.email.set_sensitive(ready);
+        self.api_key.set_sensitive(ready);
+    }
+
+    /// Starts a sign-in from `button`, unless something is already running.
+    fn begin(&self, button: &gtk::Button, text: &str) -> bool {
+        if self.busy.get() || self.switching.get() || self.waiting.is_visible() {
+            return false;
+        }
+        self.busy.set(true);
+        self.error.set_visible(false);
+        set_button_busy(button, true);
+        self.show_progress(Some(text), false);
+        self.update();
+        true
+    }
+
+    fn end(&self, button: &gtk::Button) {
+        self.busy.set(false);
+        set_button_busy(button, false);
+        self.show_progress(None, false);
+        self.update();
+    }
+
+    /// Points the CLI at the chosen cloud as soon as it is chosen, so
+    /// signing in does not wait for it.
+    fn switch_server(self: &Rc<Self>, app: &Rc<App>) {
+        if self.switching.get() {
+            self.switch_again.set(true);
+            return;
+        }
+        self.switching.set(true);
+        self.update();
+        let (me, app) = (self.clone(), app.clone());
+        glib::spawn_future_local(async move {
+            loop {
+                me.switch_again.set(false);
+                let typing =
+                    me.server.active_name().as_deref() == Some("self") && me.custom.text().is_empty();
+                if !typing {
+                    me.apply_server(&app).await;
+                }
+                if !me.switch_again.get() {
+                    break;
+                }
+            }
+            me.switching.set(false);
+            me.show_progress(None, false);
+            me.update();
+        });
+    }
+
+    /// Sends the chosen server to the CLI. False if that failed.
     async fn apply_server(&self, app: &Rc<App>) -> bool {
         self.error.set_visible(false);
-        let url = match self.server.active_name().as_deref() {
+        let choice = self.server.active_name();
+        let url = match choice.as_deref() {
             Some("eu") => Some("https://vault.bitwarden.eu".to_owned()),
             Some("self") => Some(self.custom.text().trim().to_owned()),
             _ => None,
@@ -296,7 +451,19 @@ impl SignIn {
         {
             return true;
         }
+        let name = match choice.as_deref() {
+            Some("self") => server_name(url.as_deref()),
+            Some("eu") => "EU cloud".to_owned(),
+            _ => "US cloud".to_owned(),
+        };
+        self.show_progress(Some(&format!("Switching to {name}…")), !self.busy.get());
         match app.request(Request::SetServer { url }).await {
+            Ok(Response::Status { status }) => {
+                // The status event may come after this answer; the next
+                // switch compares against the server set here.
+                app.set_status(status);
+                true
+            }
             Ok(_) => true,
             Err(e) => {
                 self.show_error(&e.message);
@@ -316,10 +483,13 @@ impl SignIn {
                 "self"
             }
         };
-        if self.waiting.is_visible() {
+        // Leave the user's choice alone while it is being applied.
+        if self.waiting.is_visible() || self.busy.get() || self.switching.get() {
             return;
         }
+        self.from_status.set(true);
         self.server.set_active_name(Some(name));
+        self.from_status.set(false);
     }
 
     fn ask_api_key(self: &Rc<Self>, app: &Rc<App>, parent: &gtk::Widget) {
@@ -349,16 +519,20 @@ impl SignIn {
             let id = Secret::new(client_id.text().trim());
             let secret = Secret::new(client_secret.text().trim());
             client_secret.set_text("");
+            if !me.begin(&me.api_key, "Signing in…") {
+                return;
+            }
             let app = app.clone();
             glib::spawn_future_local(async move {
-                if !me.apply_server(&app).await {
-                    return;
+                if me.apply_server(&app).await {
+                    me.show_progress(Some("Signing in…"), false);
+                    if let Err(e) =
+                        app.request(Request::LoginApiKey { client_id: id, client_secret: secret }).await
+                    {
+                        me.show_error(&e.message);
+                    }
                 }
-                if let Err(e) =
-                    app.request(Request::LoginApiKey { client_id: id, client_secret: secret }).await
-                {
-                    me.show_error(&e.message);
-                }
+                me.end(&me.api_key);
             });
         });
         dialog.present(Some(parent));
@@ -391,7 +565,7 @@ impl Setup {
             .build();
         let choose =
             gtk::Button::builder().label("Use a CLI on this computer…").css_classes(["flat"]).build();
-        let retry = gtk::Button::builder().label("Check again").css_classes(["flat"]).build();
+        let retry = busy_button("Check again", &["flat"]);
         column.append(&title);
         column.append(&body);
         column.append(&install);
@@ -412,7 +586,16 @@ impl Setup {
         }
         {
             let app = app.clone();
-            retry.connect_clicked(move |_| app.fire(Request::Refresh));
+            retry.connect_clicked(move |button| {
+                button.set_sensitive(false);
+                set_button_busy(button, true);
+                let (app, button) = (app.clone(), button.clone());
+                glib::spawn_future_local(async move {
+                    let _ = app.request(Request::Refresh).await;
+                    set_button_busy(&button, false);
+                    button.set_sensitive(true);
+                });
+            });
         }
         {
             let app = app.clone();

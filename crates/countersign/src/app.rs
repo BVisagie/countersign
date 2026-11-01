@@ -185,7 +185,7 @@ impl App {
         }
     }
 
-    fn set_status(self: &Rc<Self>, status: Status) {
+    pub fn set_status(self: &Rc<Self>, status: Status) {
         let was = self.status.borrow().vault;
         let now = status.vault;
         *self.status.borrow_mut() = status.clone();

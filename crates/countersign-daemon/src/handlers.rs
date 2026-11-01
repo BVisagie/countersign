@@ -39,6 +39,7 @@ impl Daemon {
             R::Status => Ok(Response::Status { status: self.status() }),
             R::Refresh => {
                 let _op = self.ops.lock().await;
+                self.forget_version();
                 self.refresh().await;
                 Ok(Response::Status { status: self.status() })
             }

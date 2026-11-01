@@ -5,6 +5,7 @@ use std::time::Duration;
 
 use secrecy::{ExposeSecret, SecretString};
 use serde::Deserialize;
+use serde::de::DeserializeOwned;
 use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio::process::Command;
 
@@ -123,9 +124,11 @@ impl Cli {
         Ok(version)
     }
 
+    /// Reads the sign-in state. The CLI prints it within about half a
+    /// second, then idles for about two more before it exits, so this returns
+    /// as soon as the answer is complete. `bw status` only reads the profile.
     pub async fn status(&self) -> Result<CliStatus> {
-        let out = self.run(self.args(["status"]), Duration::from_secs(30)).await?;
-        serde_json::from_slice(&out.stdout).map_err(|e| BwError::Protocol(format!("status: {e}")))
+        self.answer(self.args(["status"]), Duration::from_secs(30), "status").await
     }
 
     /// Points the profile at a Bitwarden server. `None` restores the default
@@ -234,12 +237,8 @@ impl Cli {
         Err(BwError::from_cli_message(&String::from_utf8_lossy(text)))
     }
 
-    pub(crate) async fn run(&self, mut cmd: Command, timeout: Duration) -> Result<Output> {
-        cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
-        let mut child = cmd.spawn().map_err(|e| match e.kind() {
-            std::io::ErrorKind::NotFound => BwError::CliMissing(self.path.clone()),
-            _ => BwError::Io(e),
-        })?;
+    pub(crate) async fn run(&self, cmd: Command, timeout: Duration) -> Result<Output> {
+        let mut child = self.spawn(cmd)?;
         let stdout = child.stdout.take().expect("piped stdout");
         let stderr = child.stderr.take().expect("piped stderr");
         let work = async {
@@ -253,6 +252,70 @@ impl Cli {
                 Err(BwError::Timeout)
             }
         }
+    }
+
+    /// Runs a command that only reads the profile and prints one JSON
+    /// document, and returns the document as soon as it is complete. The CLI
+    /// is left to exit on its own and reaped in the background; it is killed
+    /// only if it outlives `timeout`. Without a complete document, the exit
+    /// decides, as with [`Cli::run`].
+    async fn answer<T: DeserializeOwned>(&self, cmd: Command, timeout: Duration, what: &str) -> Result<T> {
+        let deadline = tokio::time::Instant::now() + timeout;
+        let mut child = self.spawn(cmd)?;
+        let mut stdout = child.stdout.take().expect("piped stdout");
+        let stderr = tokio::spawn(read_bounded(child.stderr.take().expect("piped stderr")));
+        let read = async {
+            let mut buf = Vec::new();
+            let mut chunk = [0u8; 4096];
+            loop {
+                let n = stdout.read(&mut chunk).await?;
+                if n == 0 {
+                    return Ok::<_, BwError>((buf, None));
+                }
+                buf.extend_from_slice(&chunk[..n]);
+                if buf.len() as u64 > OUTPUT_LIMIT {
+                    return Err(BwError::Protocol("the CLI produced too much output".into()));
+                }
+                if let Ok(value) = serde_json::from_slice::<T>(&buf) {
+                    return Ok((buf, Some(value)));
+                }
+            }
+        };
+        let Ok(read) = tokio::time::timeout_at(deadline, read).await else {
+            let _ = child.start_kill();
+            return Err(BwError::Timeout);
+        };
+        let (out, value) = read?;
+        if let Some(value) = value {
+            tokio::spawn(async move {
+                // Dropping the child at the deadline kills it.
+                let _ = tokio::time::timeout_at(deadline, async move {
+                    let _ = read_bounded(stdout).await;
+                    let _ = child.wait().await;
+                })
+                .await;
+            });
+            return Ok(value);
+        }
+        let Ok(status) = tokio::time::timeout_at(deadline, child.wait()).await else {
+            let _ = child.start_kill();
+            return Err(BwError::Timeout);
+        };
+        let status = status?;
+        let err = stderr.await.map_err(std::io::Error::other)??;
+        if !status.success() {
+            let text = if err.is_empty() { &out } else { &err };
+            return Err(BwError::from_cli_message(&String::from_utf8_lossy(text)));
+        }
+        serde_json::from_slice(&out).map_err(|e| BwError::Protocol(format!("{what}: {e}")))
+    }
+
+    fn spawn(&self, mut cmd: Command) -> Result<tokio::process::Child> {
+        cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+        cmd.spawn().map_err(|e| match e.kind() {
+            std::io::ErrorKind::NotFound => BwError::CliMissing(self.path.clone()),
+            _ => BwError::Io(e),
+        })
     }
 }
 
@@ -288,6 +351,41 @@ mod tests {
         let env = cli.environment();
         assert!(env.iter().any(|(k, v)| k == "BITWARDENCLI_APPDATA_DIR" && v == "/tmp/profile"));
         assert!(!env.iter().any(|(k, _)| k == "LD_PRELOAD" || k == "NODE_OPTIONS"));
+    }
+
+    /// Writes an executable shell script standing in for the CLI.
+    fn fake_cli(dir: &Path, name: &str, body: &str) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let path = dir.join(name);
+        std::fs::write(&path, format!("#!/bin/sh\n{body}")).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
+        path
+    }
+
+    // One test, so no other test forks while a script is still open for
+    // writing (which fails its exec with "text file busy").
+    #[tokio::test]
+    async fn status_returns_once_the_answer_is_complete() {
+        let dir = tempfile::tempdir().unwrap();
+        let profile = dir.path().join("profile");
+
+        // The answer arrives in two writes, then the CLI idles, as the
+        // official one does after answering.
+        let idles = fake_cli(
+            dir.path(),
+            "idles",
+            "printf '{\"serverUrl\":null,'\nsleep 0.2\nprintf '\"lastSync\":null,\"status\":\"locked\"}'\nexec sleep 5\n",
+        );
+        let started = std::time::Instant::now();
+        let status = Cli::new(&idles, &profile).status().await.unwrap();
+        assert_eq!(status.status, AuthStatus::Locked);
+        assert!(started.elapsed() < Duration::from_secs(3), "waited for the CLI to exit");
+
+        let fails = fake_cli(dir.path(), "fails", "echo 'You are not logged in.' >&2\nexit 1\n");
+        assert!(matches!(Cli::new(&fails, &profile).status().await, Err(BwError::NotLoggedIn)));
+
+        let garbled = fake_cli(dir.path(), "garbled", "printf '{\"status\":'\n");
+        assert!(matches!(Cli::new(&garbled, &profile).status().await, Err(BwError::Protocol(_))));
     }
 
     #[tokio::test]

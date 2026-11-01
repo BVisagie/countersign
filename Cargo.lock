@@ -366,6 +366,7 @@ dependencies = [
  "gtk4-layer-shell",
  "ksni",
  "libadwaita",
+ "libc",
  "nucleo-matcher",
  "serde",
  "serde_json",
