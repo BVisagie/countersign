@@ -27,15 +27,15 @@ pub enum Login {
 }
 
 /// Runs `bw login` in a dialog over `parent` and returns once the dialog
-/// closes. Until the CLI draws its first prompt, and while the vault opens
-/// after it succeeds, the dialog says so instead of showing an empty
-/// terminal.
+/// closes. Until the CLI draws its first prompt, the dialog says so instead
+/// of showing an empty terminal. Once it succeeds, the dialog closes and the
+/// window shows the vault opening.
 #[cfg(feature = "terminal")]
 pub async fn login(app: &Rc<App>, parent: &gtk::Widget, launch: TerminalLaunch) -> Result<Login, String> {
     use std::cell::{Cell, RefCell};
 
     use adw::prelude::*;
-    use countersign_ipc::{Request, Secret};
+    use countersign_ipc::{Request, Response, Secret, VaultState};
     use gtk::glib;
     use vte4::prelude::*;
 
@@ -213,23 +213,27 @@ pub async fn login(app: &Rc<App>, parent: &gtk::Widget, launch: TerminalLaunch) 
             terminal.set_opacity(0.0);
             let signed_in = session.is_some();
             let finished = Request::LoginFinished { session: session.map(Secret::new) };
-            match dialog.upgrade() {
-                Some(dialog) if signed_in => {
-                    notice_text.set_label("Opening your vault…");
-                    notice.set_visible(true);
-                    dialog.set_can_close(false);
-                    let app = app.clone();
-                    glib::spawn_future_local(async move {
-                        let _ = app.request(finished).await;
-                        dialog.force_close();
-                    });
-                }
-                dialog => {
-                    app.fire(finished);
-                    if let Some(dialog) = dialog {
-                        dialog.close();
+            if signed_in {
+                // From here the window shows the vault opening, before the
+                // dialog goes, and offers nothing that would stop it.
+                let opening = app.begin_opening();
+                let app = app.clone();
+                glib::spawn_future_local(async move {
+                    let result = app.request(finished).await;
+                    drop(opening);
+                    if let Ok(Response::Status { status }) = result
+                        && status.vault == VaultState::Locked
+                    {
+                        crate::ui::window::toast(
+                            "You're signed in. Enter your master password to open your vault.",
+                        );
                     }
-                }
+                });
+            } else {
+                app.fire(finished);
+            }
+            if let Some(dialog) = dialog.upgrade() {
+                dialog.close();
             }
         });
     }
