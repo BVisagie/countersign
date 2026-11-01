@@ -41,6 +41,7 @@ impl Daemon {
         let settings = self.settings();
         self.copy_timers.lock().expect("timers").cancel();
         let generation = self.put(value, epoch, None, settings.clipboard_clear_secs).await?;
+        self.copy_timers.lock().expect("timers").item_name = Some(name.clone());
         self.note_recent(id);
         self.emit(Event::Recent { ids: self.vault().recent });
         let follow_up = field == Field::Password && has_totp && settings.totp_follow_up;
@@ -141,7 +142,9 @@ impl Daemon {
                 follow_up_in: None,
             });
         });
-        if let Some(old) = self.copy_timers.lock().expect("timers").clear.replace(task) {
+        let mut timers = self.copy_timers.lock().expect("timers");
+        timers.clear_at = Some(std::time::Instant::now() + Duration::from_secs(u64::from(after_secs)));
+        if let Some(old) = timers.clear.replace(task) {
             old.abort();
         }
     }
@@ -199,10 +202,26 @@ impl Daemon {
     }
 
     /// Cancels a pending one-time-code replacement, keeping the password.
+    /// Re-announces the copy without the follow-up, so every receipt and
+    /// notification stops counting down to it.
     pub fn skip_follow_up(&self) {
-        if let Some(task) = self.copy_timers.lock().expect("timers").follow_up.take() {
-            task.abort();
-        }
+        let (remaining, item_name) = {
+            let mut timers = self.copy_timers.lock().expect("timers");
+            match timers.follow_up.take() {
+                Some(task) if !task.is_finished() => task.abort(),
+                // Nothing pending: the code already replaced the password.
+                _ => return,
+            }
+            let remaining = timers.clear_at.map(|at| at.saturating_duration_since(std::time::Instant::now()));
+            (remaining, timers.item_name.clone())
+        };
+        self.announce(ClipboardEvent {
+            state: ClipboardState::Copied,
+            label: "Password kept".into(),
+            item_name,
+            clears_in: remaining.map(|d| d.as_secs_f64().ceil() as u32),
+            follow_up_in: None,
+        });
     }
 
     /// Announces a copy, ordered against expiry reports.

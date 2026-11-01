@@ -49,6 +49,10 @@ struct Session {
 pub(crate) struct CopyTimers {
     pub clear: Option<JoinHandle<()>>,
     pub follow_up: Option<JoinHandle<()>>,
+    /// When the current copy clears, and what it came from, so a skipped
+    /// follow-up can re-announce the copy accurately.
+    pub clear_at: Option<Instant>,
+    pub item_name: Option<String>,
 }
 
 impl CopyTimers {
@@ -56,6 +60,8 @@ impl CopyTimers {
         for task in [self.clear.take(), self.follow_up.take()].into_iter().flatten() {
             task.abort();
         }
+        self.clear_at = None;
+        self.item_name = None;
     }
 }
 
