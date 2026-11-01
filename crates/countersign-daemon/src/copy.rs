@@ -173,6 +173,11 @@ impl Daemon {
             let code = match code {
                 Ok(code) => Zeroizing::new(code.expose_secret().to_owned()),
                 Err(e) => {
+                    // Report the failure only if a skip has not already
+                    // announced the kept password.
+                    if !decided.try_end() {
+                        return;
+                    }
                     me.emit_clipboard(ClipboardEvent {
                         state: ClipboardState::Failed,
                         label: format!("Verification code unavailable: {}", e.message),
@@ -273,6 +278,12 @@ impl FollowUpState {
         self.settle(Self::REPLACED)
     }
 
+    /// The follow-up gives up, for example when the code is unavailable;
+    /// false if a skip already settled it.
+    pub fn try_end(&self) -> bool {
+        self.settle(Self::ENDED)
+    }
+
     /// "Keep password"; false if the code already took over or the
     /// follow-up ended.
     pub fn try_cancel(&self) -> bool {
@@ -303,6 +314,13 @@ mod tests {
         let state = FollowUpState::default();
         assert!(state.try_cancel());
         assert!(!state.try_replace());
+        // A failure after a skip stays silent; a skip after a failure is refused.
+        let state = FollowUpState::default();
+        assert!(state.try_cancel());
+        assert!(!state.try_end());
+        let state = FollowUpState::default();
+        assert!(state.try_end());
+        assert!(!state.try_cancel());
         // A follow-up that ended cannot be "kept".
         let state = Arc::new(FollowUpState::default());
         drop(Finish(state.clone()));
