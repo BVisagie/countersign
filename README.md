@@ -46,27 +46,21 @@ Screenshots use a fictional demo vault; see `scripts/screenshots.sh`.
 
 ## Status
 
-Under active development; not released yet. See [the plan](docs/PLAN.md) for
-what each milestone delivers and [M0 results](docs/M0-RESULTS.md) for the
+Milestones M0 to M3 of [the plan](docs/PLAN.md) are done; not released yet.
+The plan lists what comes next. [M0 results](docs/M0-RESULTS.md) has the
 measured performance.
 
-## Requirements
+## Quick start
 
-- Omarchy, or another Hyprland desktop, with GTK 4.18+ and libadwaita 1.7+
-- `gtk4-layer-shell` for quick access, and `vte4` for in-app sign-in
-- The official Bitwarden CLI **2026.10.0 or newer**. Countersign can install
-  the official release for you, verified against Bitwarden's published
-  checksum.
-
-## Install
+On Omarchy, or another Hyprland desktop with GTK 4.18+ and libadwaita 1.7+:
 
 ```bash
+git clone https://github.com/BVisagie/countersign.git
+cd countersign
 scripts/install.sh
 ```
 
-This builds `countersign` (the app) and `countersignd` (its background
-service), installs them in `~/.local/bin`, and adds the desktop entry and
-icon. Then add quick access and autostart to Hyprland:
+Add quick access and autostart to Hyprland:
 
 ```lua
 -- ~/.config/hypr/bindings.lua
@@ -75,12 +69,17 @@ o.bind("SUPER + SHIFT + P", "Passwords", "countersign --quick")
 o.launch_on_start("countersign --background")
 ```
 
-On first run Countersign offers to install the official CLI. It downloads the
-pinned release from Bitwarden's GitHub, checks it against the recorded
-SHA-256, and keeps it in `~/.local/share/countersign/bitwarden-cli/`. You can
-point it at a CLI of your own in Settings instead.
+Open Countersign. It offers to install the official Bitwarden CLI, checked
+against the SHA-256 recorded in its source, then signs you in. Countersign
+works with the official CLI **2026.10.0 or newer**, and installs 2026.10.1
+when you let it.
 
-## Use
+- [Installing](docs/INSTALL.md): requirements, choosing a CLI, updating,
+  uninstalling and troubleshooting.
+- [Using Countersign](docs/USAGE.md): sign-in, quick access, copying,
+  editing, Send, locking and settings.
+
+## Keys
 
 | Key | Action |
 | --- | --- |
@@ -97,10 +96,7 @@ point it at a CLI of your own in Settings instead.
 | `Ctrl+,` | Settings |
 | `Esc` | Clear the search, then close quick access |
 
-Copies made from quick access show a notification. When the verification
-code is about to replace a copied password, the notification and the main
-window offer **Keep password**. The tray icon shows whether the vault is open;
-click it for Countersign, or use its menu for quick access and locking.
+More in [Using Countersign](docs/USAGE.md).
 
 ## How it works
 

@@ -1,4 +1,29 @@
+# Build output
 /target
-*.swp
+**/*.rs.bk
+
+# Environment files: test-account credentials must never be committed
+.env
+.env.*
+
+# Personal tool settings
 /.idea
 /.vscode
+/.zed
+mise.local.toml
+.mise.local.toml
+.claude/settings.local.json
+
+# Editor and patch leftovers
+*.swp
+*.swo
+*~
+*.orig
+*.rej
+
+# Profiling and coverage
+perf.data*
+*.profraw
+*.profdata
+/coverage
+lcov.info

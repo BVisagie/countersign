@@ -767,13 +767,12 @@ impl MainWindow {
         {
             let app = self.app.clone();
             self.window.connect_close_request(move |window| {
-                if app.settings.borrow().close_to_background {
-                    window.set_visible(false);
-                    glib::Propagation::Stop
-                } else {
-                    app.gtk.quit();
-                    glib::Propagation::Proceed
+                window.set_visible(false);
+                if !app.settings.borrow().close_to_background {
+                    // Quit like Ctrl+Q does, which locks the vault first.
+                    app.gtk.activate_action("quit", None);
                 }
+                glib::Propagation::Stop
             });
         }
     }
