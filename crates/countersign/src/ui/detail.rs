@@ -91,6 +91,11 @@ impl Detail {
         self.editor.borrow().is_some()
     }
 
+    /// Drops the results of any load or reveal still running.
+    pub(super) fn invalidate(&self) {
+        self.generation.set(self.generation.get() + 1);
+    }
+
     pub fn current(&self) -> Option<String> {
         self.current.borrow().clone()
     }

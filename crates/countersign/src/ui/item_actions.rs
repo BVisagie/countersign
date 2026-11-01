@@ -98,7 +98,13 @@ impl Detail {
             let result =
                 me.app.with_reprompt(&me.parent(), &id, || Request::ItemForEdit { id: id.clone() }).await;
             match result {
-                Ok(Some(Response::Json { value })) => me.open_editor(value, false),
+                // Only if the item is still the one shown, and no other
+                // editor opened meanwhile.
+                Ok(Some(Response::Json { value }))
+                    if me.current_id().as_deref() == Some(id.as_str()) && !me.is_editing() =>
+                {
+                    me.open_editor(value, false)
+                }
                 Ok(_) => {}
                 Err(e) => (me.notify)(&e.message),
             }
@@ -126,6 +132,8 @@ impl Detail {
         let vault = self.vault.borrow().clone();
         let editor = Editor::new(&self.app, item, &vault, creating, on_done);
         self.close_editor();
+        // A detail load still running must not render over the editor.
+        self.invalidate();
         self.root.add_named(&editor.root, Some("edit"));
         self.root.set_visible_child_name("edit");
         // The editor has its own Cancel and Save.
@@ -157,23 +165,13 @@ impl Detail {
         });
     }
 
+    /// Done in the daemon, so the item's secrets never reach the app.
     fn toggle_favorite(self: &Rc<Self>) {
         let Some(id) = self.current_id() else { return };
+        let favorite = !self.vault.borrow().items.iter().any(|i| i.id == id && i.favorite);
         let me = self.clone();
         glib::spawn_future_local(async move {
-            let item = match me
-                .app
-                .with_reprompt(&me.parent(), &id, || Request::ItemForEdit { id: id.clone() })
-                .await
-            {
-                Ok(Some(Response::Json { value })) => value,
-                Ok(_) => return,
-                Err(e) => return (me.notify)(&e.message),
-            };
-            let mut item = item;
-            let favorite = item["favorite"].as_bool() != Some(true);
-            item["favorite"] = Value::from(favorite);
-            match me.app.request(Request::EditItem { id: id.clone(), item }).await {
+            match me.app.request(Request::SetFavorite { id: id.clone(), favorite }).await {
                 Ok(_) => {
                     (me.notify)(if favorite { "Added to favorites" } else { "Removed from favorites" });
                     me.reload(Some(&id));

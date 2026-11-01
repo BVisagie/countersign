@@ -40,6 +40,8 @@ pub struct Sends {
     stale: Cell<bool>,
     loading: Cell<bool>,
     generation: Cell<u64>,
+    /// Bumped when the vault locks, so replies sent before are ignored.
+    cleared: Cell<u64>,
     editor: RefCell<Option<adw::Dialog>>,
 }
 
@@ -124,6 +126,7 @@ impl Sends {
             stale: Cell::new(true),
             loading: Cell::new(false),
             generation: Cell::new(0),
+            cleared: Cell::new(0),
             editor: RefCell::default(),
         });
         let group = gio::SimpleActionGroup::new();
@@ -160,12 +163,16 @@ impl Sends {
     /// Forgets every Send and closes the editor, for example when the vault
     /// locks.
     pub fn clear(self: &Rc<Self>) {
+        self.cleared.set(self.cleared.get() + 1);
         self.generation.set(self.generation.get() + 1);
         self.loading.set(false);
         self.spinner.set_visible(false);
         self.stale.set(true);
         self.sends.borrow_mut().clear();
-        if let Some(dialog) = self.editor.borrow_mut().take() {
+        // Take it out first: closing runs the `closed` handler, which
+        // borrows `editor` too.
+        let editor = self.editor.borrow_mut().take();
+        if let Some(dialog) = editor {
             dialog.force_close();
         }
         self.render();
@@ -530,12 +537,29 @@ impl Sends {
             .default_widget(&save)
             .build();
 
-        // Saving needs a name, the text or file to share, and a password
-        // while one is required.
+        // Handlers hold widgets weakly: a widget holding its own handler
+        // would never be freed. The original Send, which has its text and
+        // key, is dropped when the editor closes.
+        let original = Rc::new(RefCell::new(original));
+        let saving = Rc::new(Cell::new(false));
+
+        // Saving needs a name, the text or file to share, a password while
+        // one is required, and no save already running.
         let validate: Rc<dyn Fn()> = Rc::new({
-            let (name, text, chosen, protect, password, save) =
-                (name.clone(), text.clone(), chosen.clone(), protect.clone(), password.clone(), save.clone());
+            let (name, text, protect, password, save) = (
+                name.downgrade(),
+                text.downgrade(),
+                protect.downgrade(),
+                password.downgrade(),
+                save.downgrade(),
+            );
+            let (chosen, saving) = (chosen.clone(), saving.clone());
             move || {
+                let (Some(name), Some(text), Some(protect), Some(password), Some(save)) =
+                    (name.upgrade(), text.upgrade(), protect.upgrade(), password.upgrade(), save.upgrade())
+                else {
+                    return;
+                };
                 let named = !name.text().trim().is_empty();
                 let content = if file {
                     !creating || chosen.borrow().is_some()
@@ -543,7 +567,7 @@ impl Sends {
                     text.buffer().char_count() > 0
                 };
                 let locked = !protect.is_active() || !password.text().is_empty();
-                save.set_sensitive(named && content && locked);
+                save.set_sensitive(named && content && locked && !saving.get());
             }
         });
         validate();
@@ -568,7 +592,7 @@ impl Sends {
             file_row.add_suffix(&choose);
             file_row.set_activatable_widget(Some(&choose));
             let (chosen, file_row, name, validate) =
-                (chosen.clone(), file_row.clone(), name.clone(), validate.clone());
+                (chosen.clone(), file_row.downgrade(), name.downgrade(), validate.clone());
             choose.connect_clicked(move |button| {
                 let window = button.root().and_downcast::<gtk::Window>();
                 let chooser = gtk::FileDialog::builder().title("Choose a file to send").build();
@@ -577,6 +601,7 @@ impl Sends {
                 glib::spawn_future_local(async move {
                     let Ok(picked) = chooser.open_future(window.as_ref()).await else { return };
                     let Some(path) = picked.path() else { return };
+                    let (Some(file_row), Some(name)) = (file_row.upgrade(), name.upgrade()) else { return };
                     let shown =
                         path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
                     file_row.set_subtitle(&shown);
@@ -590,17 +615,22 @@ impl Sends {
         }
 
         {
-            let dialog = dialog.clone();
+            let dialog = dialog.downgrade();
             cancel.connect_clicked(move |_| {
-                dialog.close();
+                if let Some(dialog) = dialog.upgrade() {
+                    dialog.close();
+                }
             });
         }
         {
-            // Leave nothing typed behind once the editor closes.
+            // Leave nothing typed or fetched behind once the editor closes.
             let (me, text, password) = (Rc::downgrade(self), text.clone(), password.clone());
+            let (original, chosen) = (original.clone(), chosen.clone());
             dialog.connect_closed(move |dialog| {
                 text.buffer().set_text("");
                 password.set_text("");
+                *original.borrow_mut() = Value::Null;
+                chosen.borrow_mut().take();
                 if let Some(me) = me.upgrade() {
                     let mut editor = me.editor.borrow_mut();
                     if editor.as_ref() == Some(dialog) {
@@ -622,25 +652,38 @@ impl Sends {
             notes,
         };
         {
-            let (me, dialog, banner) = (self.clone(), dialog.clone(), banner.clone());
+            let (me, dialog, banner) = (Rc::downgrade(self), dialog.downgrade(), banner.downgrade());
             save.connect_clicked(move |button| {
-                let send = form.apply(&original, file, creating);
-                let request = if creating {
-                    Request::CreateSend { send, file: chosen.borrow().clone() }
-                } else {
-                    let id = original["id"].as_str().unwrap_or_default().to_owned();
-                    Request::EditSend { id, send }
+                let Some(me) = me.upgrade() else { return };
+                let request = {
+                    let original = original.borrow();
+                    let send = form.apply(&original, file, creating);
+                    if creating {
+                        Request::CreateSend { send, file: chosen.borrow().clone() }
+                    } else {
+                        let id = original["id"].as_str().unwrap_or_default().to_owned();
+                        Request::EditSend { id, send }
+                    }
                 };
-                button.set_sensitive(false);
+                saving.set(true);
+                validate();
                 button.set_label(if creating { "Creating…" } else { "Saving…" });
-                let (me, dialog, banner, button) =
-                    (me.clone(), dialog.clone(), banner.clone(), button.clone());
+                let epoch = me.cleared.get();
+                let (dialog, banner, button, saving, validate) =
+                    (dialog.clone(), banner.clone(), button.downgrade(), saving.clone(), validate.clone());
                 glib::spawn_future_local(async move {
-                    match me.app.request(request).await {
+                    let result = me.app.request(request).await;
+                    // Locked meanwhile: the editor is gone and so is the list.
+                    if me.cleared.get() != epoch {
+                        return;
+                    }
+                    match result {
                         Ok(Response::Json { value }) => {
                             let id = value["id"].as_str().map(str::to_owned);
                             me.upsert(value);
-                            dialog.close();
+                            if let Some(dialog) = dialog.upgrade() {
+                                dialog.close();
+                            }
                             match id {
                                 // A new Send is made to be shared: copy its link.
                                 Some(id) if creating => me.copy_link(&id),
@@ -648,19 +691,29 @@ impl Sends {
                             }
                         }
                         Ok(_) => {
-                            dialog.close();
+                            if let Some(dialog) = dialog.upgrade() {
+                                dialog.close();
+                            }
                         }
                         Err(e) => {
-                            banner.set_title(&e.message);
-                            banner.set_revealed(true);
-                            button.set_sensitive(true);
-                            button.set_label(if creating { "Create" } else { "Save" });
+                            if let Some(banner) = banner.upgrade() {
+                                banner.set_title(&e.message);
+                                banner.set_revealed(true);
+                            }
+                            if let Some(button) = button.upgrade() {
+                                button.set_label(if creating { "Create" } else { "Save" });
+                            }
+                            saving.set(false);
+                            validate();
                         }
                     }
                 });
             });
         }
-        if let Some(previous) = self.editor.borrow_mut().replace(dialog.clone()) {
+        // Take the old editor out before closing it: closing runs the
+        // `closed` handler, which borrows `editor` too.
+        let previous = self.editor.borrow_mut().replace(dialog.clone());
+        if let Some(previous) = previous {
             previous.force_close();
         }
         dialog.present(Some(&self.root));

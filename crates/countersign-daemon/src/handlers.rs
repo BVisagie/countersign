@@ -210,6 +210,15 @@ impl Daemon {
                 let (item, secret_fields) = redact(&edited);
                 Ok(Response::Item { item, secret_fields })
             }
+            R::SetFavorite { id, favorite } => {
+                self.touch();
+                let client = self.client().await?;
+                let mut item = client.get_item(&id).await.map_err(ipc_error)?;
+                item["favorite"] = Value::from(favorite);
+                client.edit_item(&id, &item).await.map_err(ipc_error)?;
+                self.changed(&client).await;
+                Ok(Response::Ok)
+            }
             R::DeleteItem { id, permanent } => {
                 self.touch();
                 let client = self.client().await?;

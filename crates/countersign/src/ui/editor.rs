@@ -86,6 +86,12 @@ fn text(v: &Value) -> String {
     v.as_str().unwrap_or_default().to_owned()
 }
 
+/// The text as typed, or JSON null when empty. For values whose spaces may
+/// matter, such as notes and custom fields.
+fn keep(s: &str) -> Value {
+    if s.is_empty() { Value::Null } else { Value::from(s) }
+}
+
 /// A trimmed string, or JSON null when empty.
 fn opt(s: &str) -> Value {
     let s = s.trim();
@@ -207,13 +213,16 @@ impl Editor {
                 let generate = super::icon_button("view-refresh-symbolic", "Generate a password");
                 pass.add_suffix(&generate);
                 {
-                    let (app, pass) = (app.clone(), pass.clone());
+                    // Weak: a row holding its own handler would never be
+                    // freed, and its password with it.
+                    let (app, pass) = (app.clone(), pass.downgrade());
                     generate.connect_clicked(move |_| {
                         let (app, pass) = (app.clone(), pass.clone());
                         glib::spawn_future_local(async move {
                             let options = GenerateOptions::default();
                             if let Ok(Response::Secret { value }) =
                                 app.request(Request::Generate { options }).await
+                                && let Some(pass) = pass.upgrade()
                             {
                                 pass.set_text(value.expose());
                             }
@@ -290,7 +299,28 @@ impl Editor {
                 page.add(&group);
                 title = Some(t);
             }
-            ItemKind::SecureNote | ItemKind::SshKey => {}
+            ItemKind::SshKey => {
+                // Bitwarden derives the public key and fingerprint from the
+                // private key, which the CLI cannot do; the key stays as it is.
+                let k = &item["sshKey"];
+                let group = adw::PreferencesGroup::builder()
+                    .title("SSH key")
+                    .description("The key itself cannot be changed.")
+                    .build();
+                for (label, value) in [("Public key", &k["publicKey"]), ("Fingerprint", &k["keyFingerprint"])]
+                {
+                    let row = adw::ActionRow::builder()
+                        .title(label)
+                        .subtitle(text(value))
+                        .subtitle_selectable(true)
+                        .use_markup(false)
+                        .build();
+                    row.add_css_class("property");
+                    group.add(&row);
+                }
+                page.add(&group);
+            }
+            ItemKind::SecureNote => {}
         }
 
         let notes_group = adw::PreferencesGroup::builder().title("Notes").build();
@@ -430,13 +460,13 @@ impl Editor {
             group.add(add);
         }
         self.uris.borrow_mut().push((original, row.clone()));
-        let (weak, row_ref) = (Rc::downgrade(self), row.clone());
+        let (weak, row_ref) = (Rc::downgrade(self), row.downgrade());
         remove.connect_clicked(move |_| {
-            let Some(me) = weak.upgrade() else { return };
+            let (Some(me), Some(row)) = (weak.upgrade(), row_ref.upgrade()) else { return };
             if let Some(group) = &me.uri_group {
-                group.remove(&row_ref);
+                group.remove(&row);
             }
-            me.uris.borrow_mut().retain(|(_, r)| r != &row_ref);
+            me.uris.borrow_mut().retain(|(_, r)| r != &row);
         });
     }
 
@@ -445,9 +475,11 @@ impl Editor {
         let column = gtk::Box::new(gtk::Orientation::Vertical, 2);
         for (kind, label) in [(0, "Text"), (1, "Hidden"), (2, "Checkbox")] {
             let button = gtk::Button::builder().label(label).css_classes(["flat"]).build();
-            let (weak, popover) = (Rc::downgrade(self), popover.clone());
+            let (weak, popover) = (Rc::downgrade(self), popover.downgrade());
             button.connect_clicked(move |_| {
-                popover.popdown();
+                if let Some(popover) = popover.upgrade() {
+                    popover.popdown();
+                }
                 if let Some(me) = weak.upgrade() {
                     me.add_field(None, kind, "", None);
                 }
@@ -501,15 +533,18 @@ impl Editor {
             name: name_row.clone(),
             value: value_widget,
         });
+        // Weak rows: the name row holds this handler, and a hidden value
+        // must not outlive the editor.
         let weak = Rc::downgrade(self);
-        let name_ref = name_row.clone();
+        let name_ref = name_row.downgrade();
+        let value_ref = value_row.map(|row| row.downgrade());
         remove.connect_clicked(move |_| {
-            let Some(me) = weak.upgrade() else { return };
-            me.fields_group.remove(&name_ref);
-            if let Some(row) = &value_row {
-                me.fields_group.remove(row);
+            let (Some(me), Some(name)) = (weak.upgrade(), name_ref.upgrade()) else { return };
+            me.fields_group.remove(&name);
+            if let Some(row) = value_ref.as_ref().and_then(|r| r.upgrade()) {
+                me.fields_group.remove(&row);
             }
-            me.fields.borrow_mut().retain(|f| f.name != name_ref);
+            me.fields.borrow_mut().retain(|f| f.name != name);
         });
     }
 
@@ -526,7 +561,7 @@ impl Editor {
         item["favorite"] = Value::from(self.favorite.is_active());
         item["reprompt"] = Value::from(i64::from(self.reprompt.is_active()));
         let buffer = self.notes.buffer();
-        item["notes"] = opt(&buffer.text(&buffer.start_iter(), &buffer.end_iter(), false));
+        item["notes"] = keep(&buffer.text(&buffer.start_iter(), &buffer.end_iter(), false));
 
         if let (Some(user), Some(pass), Some(key)) = (&self.username, &self.password, &self.totp) {
             item["login"]["username"] = opt(&user.text());
@@ -591,8 +626,8 @@ impl Editor {
                 out["name"] = opt(&field.name.text());
                 out["type"] = Value::from(field.kind);
                 match &field.value {
-                    FieldValue::Text(row) => out["value"] = opt(&row.text()),
-                    FieldValue::Hidden(row) => out["value"] = opt(&row.text()),
+                    FieldValue::Text(row) => out["value"] = keep(&row.text()),
+                    FieldValue::Hidden(row) => out["value"] = keep(&row.text()),
                     FieldValue::Boolean(row) => {
                         out["value"] = Value::from(if row.is_active() { "true" } else { "false" })
                     }
@@ -623,6 +658,10 @@ impl Editor {
         glib::spawn_future_local(async move {
             let result = me.app.request(request).await;
             me.save.set_sensitive(true);
+            // Cancelled or replaced while saving: another editor may be open.
+            if me.root.parent().is_none() {
+                return;
+            }
             match result {
                 Ok(Response::Item { item, .. }) => (me.on_done)(item["id"].as_str().map(str::to_owned)),
                 Ok(_) => (me.on_done)(None),
@@ -656,5 +695,7 @@ mod tests {
     fn empty_text_becomes_null() {
         assert_eq!(opt("  "), Value::Null);
         assert_eq!(opt(" a "), Value::from("a"));
+        assert_eq!(keep(""), Value::Null);
+        assert_eq!(keep(" token \n"), Value::from(" token \n"));
     }
 }

@@ -18,9 +18,10 @@ interface and the desktop integration around it.
   folders, organization collections, favorites and trash, and a password and
   passphrase generator. Secrets stay masked until you
   reveal them. Verification codes count down live.
-- **Editing.** Create and edit every item type, with websites and custom
-  fields; manage folders and attachments; move items to an organization;
-  trash, restore or delete forever.
+- **Editing.** Create and edit logins, cards, identities and notes, with
+  websites and custom fields; SSH keys keep their key and the rest can be
+  edited. Manage folders and attachments, move items to an organization,
+  and trash, restore or delete forever.
 - **Send.** Share text or a file through Bitwarden Send. A new Send's link
   goes straight to the clipboard.
 - **A clipboard that cleans up.** Copies clear themselves after 30 seconds

@@ -97,6 +97,11 @@ pub enum Request {
     ItemForEdit {
         id: String,
     },
+    /// Stars or unstars an item. Nothing secret reaches the app.
+    SetFavorite {
+        id: String,
+        favorite: bool,
+    },
     CreateItem {
         item: Value,
     },

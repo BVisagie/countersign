@@ -936,13 +936,20 @@ impl MainWindow {
                 "Try fewer letters, or search all items."
             }));
             self.list_stack.set_visible_child_name("empty");
-            self.detail.show(None);
         } else {
             self.list_stack.set_visible_child_name("list");
-            if let Some(item) = self.list.selected() {
+        }
+        // An edit in progress keeps the pane until it is saved or
+        // cancelled; locking closes it (see `status_changed`).
+        if self.detail.is_editing() {
+            return;
+        }
+        match self.list.selected().filter(|_| !shown.is_empty()) {
+            Some(item) => {
                 self.detail.show(Some(&item.id));
                 self.detail_page.set_title(&item.name);
             }
+            None => self.detail.show(None),
         }
     }
 }
@@ -1123,6 +1130,10 @@ impl View for MainWindow {
         if status.vault != VaultState::Unlocked {
             self.generator.clear();
             self.sends.clear();
+            // Drop an open editor and the secrets in its fields.
+            if self.detail.is_editing() {
+                self.detail.reload(None);
+            }
         }
         self.update_sync_label(status);
         self.dot.set_css_classes(&match (status.vault, status.syncing) {
