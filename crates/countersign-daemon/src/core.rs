@@ -598,6 +598,17 @@ impl Daemon {
         }
     }
 
+    /// A copy of the session key, for the one-off Send commands that
+    /// `bw serve` cannot run or answers stale; see `Cli::send_list`.
+    pub(crate) fn session_key(&self) -> Result<SessionKey, IpcError> {
+        self.session
+            .lock()
+            .expect("session")
+            .as_ref()
+            .map(|s| s.key.clone())
+            .ok_or_else(|| self.closed_error())
+    }
+
     pub(crate) fn epoch(&self) -> u64 {
         self.epoch.load(Ordering::SeqCst)
     }

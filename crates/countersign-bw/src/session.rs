@@ -23,6 +23,12 @@ impl SessionKey {
     }
 }
 
+impl Clone for SessionKey {
+    fn clone(&self) -> Self {
+        SessionKey(SecretString::from(self.expose().to_owned()))
+    }
+}
+
 impl fmt::Debug for SessionKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("SessionKey(..)")

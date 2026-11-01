@@ -151,6 +151,64 @@ impl Cli {
         }
     }
 
+    /// Creates a file Send, which `bw serve` cannot. The request, which may
+    /// hold the Send's password, goes to the CLI on stdin, never in its
+    /// arguments; `send["file"]["fileName"]` names the file to upload.
+    pub async fn send_create_file(
+        &self,
+        session: &crate::SessionKey,
+        send: &serde_json::Value,
+    ) -> Result<serde_json::Value> {
+        use base64::Engine;
+        use tokio::io::AsyncWriteExt;
+
+        let json =
+            zeroize::Zeroizing::new(serde_json::to_vec(send).map_err(|e| BwError::Protocol(e.to_string()))?);
+        let encoded = zeroize::Zeroizing::new(base64::engine::general_purpose::STANDARD.encode(&*json));
+        let mut cmd = self.args(["send", "create"]);
+        cmd.env("BW_SESSION", session.expose())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let mut child = cmd.spawn().map_err(BwError::Io)?;
+        let mut stdin = child.stdin.take().expect("piped stdin");
+        let stdout = child.stdout.take().expect("piped stdout");
+        let stderr = child.stderr.take().expect("piped stderr");
+        let work = async {
+            stdin.write_all(encoded.as_bytes()).await?;
+            drop(stdin);
+            let (out, err, status) = tokio::join!(read_bounded(stdout), read_bounded(stderr), child.wait());
+            Ok::<_, BwError>((status?, out?, err?))
+        };
+        let (status, out, err) = match tokio::time::timeout(Duration::from_secs(600), work).await {
+            Ok(result) => result?,
+            Err(_) => {
+                let _ = child.start_kill();
+                return Err(BwError::Timeout);
+            }
+        };
+        if !status.success() {
+            let text = if err.is_empty() { &out } else { &err };
+            return Err(BwError::from_cli_message(&String::from_utf8_lossy(text)));
+        }
+        serde_json::from_slice(&out).map_err(|e| BwError::Protocol(format!("send create: {e}")))
+    }
+
+    /// Lists Sends. `bw serve` 2026.10.1 answers `/send/list` from a cache it
+    /// never refreshes, so creates, edits, deletes and syncs never show
+    /// there; this one-off command reads the stored vault each time.
+    pub async fn send_list(&self, session: &crate::SessionKey) -> Result<Vec<serde_json::Value>> {
+        let mut cmd = self.args(["send", "list"]);
+        cmd.env("BW_SESSION", session.expose());
+        let out = self.run(cmd, Duration::from_secs(60)).await?;
+        let stdout = zeroize::Zeroizing::new(out.stdout);
+        if !out.status.success() {
+            let text = if out.stderr.is_empty() { &*stdout } else { &out.stderr };
+            return Err(BwError::from_cli_message(&String::from_utf8_lossy(text)));
+        }
+        serde_json::from_slice(&stdout).map_err(|e| BwError::Protocol(format!("send list: {e}")))
+    }
+
     pub async fn lock(&self) -> Result<()> {
         self.checked(self.args(["lock"]), Duration::from_secs(30)).await
     }
