@@ -87,6 +87,9 @@ pub fn run(app: &Rc<App>, dir: PathBuf) {
         main.search.set_text("git");
         settle().await;
         shot(main.window.upcast_ref(), "main-search");
+        main.search.set_text("no such item");
+        settle().await;
+        shot(main.window.upcast_ref(), "main-empty");
         main.search.set_text("");
 
         main.list.select_by_id("00000000-0000-4000-8000-000000000030");

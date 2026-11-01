@@ -446,6 +446,7 @@ impl MainWindow {
         let loading = gtk::Box::new(gtk::Orientation::Vertical, 12);
         loading.set_valign(gtk::Align::Center);
         loading.set_halign(gtk::Align::Center);
+        loading.append(&super::gates::mark());
         let spinner = adw::Spinner::new();
         spinner.set_size_request(32, 32);
         loading.append(&spinner);

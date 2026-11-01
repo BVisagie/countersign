@@ -48,7 +48,7 @@ impl Detail {
             .vexpand(true)
             .build();
         let empty = adw::StatusPage::builder()
-            .icon_name("dialog-password-symbolic")
+            .icon_name(super::SENTRY_AT_EASE_ICON)
             .title("No item selected")
             .description("Search or pick an item to see its details.")
             .build();
