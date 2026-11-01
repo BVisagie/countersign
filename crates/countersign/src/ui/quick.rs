@@ -386,18 +386,30 @@ impl Quick {
 
 impl View for Quick {
     fn status_changed(&self, status: &Status) {
+        // As in the main window: an unlock form on screen stays, busy,
+        // while the vault opens.
+        let opening = self.app.opening();
+        let showing = self.stack.visible_child_name();
         let page = match (&status.cli, status.vault) {
+            (CliState::Ready { .. }, _) if opening => {
+                if showing.as_deref() == Some("locked") {
+                    "locked"
+                } else {
+                    "other"
+                }
+            }
             (CliState::Ready { .. }, VaultState::Unlocked) => "vault",
-            (CliState::Ready { .. }, VaultState::Locked | VaultState::Unlocking) => "locked",
+            (CliState::Ready { .. }, VaultState::Locked) => "locked",
             _ => "other",
         };
         self.other_text.set_label(match status.vault {
+            _ if opening => "Opening your vault…",
             VaultState::LoggedOut => "Sign in to Bitwarden in Countersign first.",
             _ => "Countersign is getting ready.",
         });
-        let changed = self.stack.visible_child_name().as_deref() != Some(page);
+        let changed = showing.as_deref() != Some(page);
         self.stack.set_visible_child_name(page);
-        self.unlock.set_status(status);
+        self.unlock.set_status(status, opening);
         if changed && self.window.is_visible() {
             self.focus();
         }

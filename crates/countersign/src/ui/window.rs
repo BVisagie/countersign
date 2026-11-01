@@ -217,6 +217,7 @@ pub struct MainWindow {
     app: Rc<App>,
     stack: gtk::Stack,
     toasts: adw::ToastOverlay,
+    loading_text: gtk::Label,
     unlock: Rc<Unlock>,
     sign_in: Rc<SignIn>,
     setup: Rc<Setup>,
@@ -448,6 +449,9 @@ impl MainWindow {
         let spinner = adw::Spinner::new();
         spinner.set_size_request(32, 32);
         loading.append(&spinner);
+        let loading_text = label("", &["cs-gate-body"]);
+        loading_text.set_halign(gtk::Align::Center);
+        loading.append(&loading_text);
         let stack = gtk::Stack::builder().transition_type(gtk::StackTransitionType::Crossfade).build();
         let gate = |child: &gtk::Widget| {
             let view = adw::ToolbarView::new();
@@ -469,6 +473,7 @@ impl MainWindow {
             app: app.clone(),
             stack,
             toasts,
+            loading_text,
             unlock,
             sign_in,
             setup,
@@ -1080,6 +1085,31 @@ impl MainWindow {
     }
 }
 
+/// The window actions that act on the open vault.
+const VAULT_ACTIONS: [&str; 8] =
+    ["lock", "sync", "sign-out", "new-item", "new-folder", "generator", "sends", "focus-search"];
+
+/// The page the main window shows for `status`, given the page it shows
+/// now. While the vault opens, an unlock form on screen stays, busy; any
+/// other page gives way to "Opening your vault…".
+fn page_for(status: &Status, opening: bool, showing: Option<&str>) -> &'static str {
+    match (&status.cli, status.vault) {
+        (CliState::Checking, _) => "loading",
+        (CliState::Ready { .. }, _) if opening => {
+            if showing == Some("locked") {
+                "locked"
+            } else {
+                "loading"
+            }
+        }
+        (CliState::Ready { .. }, VaultState::Unlocked) => "vault",
+        (CliState::Ready { .. }, VaultState::Locked) => "locked",
+        (CliState::Ready { .. }, VaultState::LoggedOut) => "signin",
+        (CliState::Ready { .. }, VaultState::Unlocking | VaultState::Unknown) => "loading",
+        _ => "setup",
+    }
+}
+
 fn focus_in_editable(window: &adw::ApplicationWindow) -> bool {
     gtk::prelude::GtkWindowExt::focus(window).is_some_and(|w| w.is::<gtk::Text>() || w.is::<gtk::Entry>())
 }
@@ -1097,17 +1127,18 @@ fn has_text_selection(window: &adw::ApplicationWindow) -> bool {
 
 impl View for MainWindow {
     fn status_changed(&self, status: &Status) {
-        let page = match (&status.cli, status.vault) {
-            (CliState::Checking, _) => "loading",
-            (CliState::Ready { .. }, VaultState::Unlocked) => "vault",
-            (CliState::Ready { .. }, VaultState::Locked | VaultState::Unlocking) => "locked",
-            (CliState::Ready { .. }, VaultState::LoggedOut) => "signin",
-            (CliState::Ready { .. }, VaultState::Unknown) => "loading",
-            _ => "setup",
-        };
+        let opening = self.app.opening();
         let previous = self.stack.visible_child_name();
+        let page = page_for(status, opening, previous.as_deref());
         self.stack.set_visible_child_name(page);
-        self.unlock.set_status(status);
+        self.loading_text.set_label(if opening { "Opening your vault…" } else { "" });
+        // The vault's shortcuts and menus act only on the vault page.
+        for name in VAULT_ACTIONS {
+            if let Some(action) = self.window.lookup_action(name).and_downcast::<gio::SimpleAction>() {
+                action.set_enabled(page == "vault");
+            }
+        }
+        self.unlock.set_status(status, opening);
         self.sign_in.set_status(status);
         self.setup.set_status(status);
         if page == "locked" && previous.as_deref() != Some("locked") {
@@ -1170,5 +1201,53 @@ impl View for MainWindow {
         self.receipt.show(event);
         self.generator_receipt.show(event);
         self.sends_receipt.show(event);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use countersign_ipc::{CliState, Status, VaultState};
+
+    use super::page_for;
+
+    fn status(vault: VaultState) -> Status {
+        Status {
+            cli: CliState::Ready { version: "2026.10.1".into(), managed: true },
+            vault,
+            account: None,
+            server_url: None,
+            last_sync: None,
+            syncing: false,
+        }
+    }
+
+    #[test]
+    fn an_unlock_keeps_its_form_and_a_sign_in_shows_the_vault_opening() {
+        use VaultState::*;
+        // Unlocking from the form: the form stays until the vault can show.
+        for vault in [Locked, Unlocking, Unlocked] {
+            assert_eq!(page_for(&status(vault), true, Some("locked")), "locked");
+        }
+        // Signing in: the sign-in page gives way, and nothing comes between.
+        assert_eq!(page_for(&status(LoggedOut), true, Some("signin")), "loading");
+        for vault in [Locked, Unlocking, Unlocked] {
+            assert_eq!(page_for(&status(vault), true, Some("loading")), "loading");
+        }
+        assert_eq!(page_for(&status(Unlocked), false, Some("loading")), "vault");
+        assert_eq!(page_for(&status(Unlocked), false, Some("locked")), "vault");
+        // A failed open lands on the form.
+        assert_eq!(page_for(&status(Locked), false, Some("loading")), "locked");
+        assert_eq!(page_for(&status(Locked), false, Some("locked")), "locked");
+        assert_eq!(page_for(&status(LoggedOut), false, Some("loading")), "signin");
+    }
+
+    #[test]
+    fn the_cli_comes_first() {
+        let mut checking = status(VaultState::Unlocking);
+        checking.cli = CliState::Checking;
+        assert_eq!(page_for(&checking, true, Some("locked")), "loading");
+        let mut missing = status(VaultState::Unlocking);
+        missing.cli = CliState::Missing;
+        assert_eq!(page_for(&missing, true, Some("locked")), "setup");
     }
 }
