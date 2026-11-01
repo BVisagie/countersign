@@ -30,6 +30,18 @@ request to the running server costs milliseconds.
 The CLI refuses to serve until an account is logged in, and has no login
 route, so sign-in uses `bw login` itself.
 
+Two Send commands also run one-off, with the session key in the child's
+environment. `bw serve` has no route for file Sends, so `bw send create`
+reads its request on stdin. And `bw serve` 2026.10.1 answers `/send/list`
+from a cache it never refreshes: creates, edits, deletes and syncs do not
+show there until the server restarts. `bw send list` reads the stored vault
+each time, at the usual two to three seconds, so the app updates its Send
+list from each change's reply and lists again only after a sync or unlock.
+
+Editing a Send through the CLI removes its password unless the request
+carries one; the CLI never returns it. The editor therefore asks for the
+password again to keep it.
+
 ## The daemon
 
 `countersignd` starts on demand from the app, holds a lock so only one runs
@@ -43,6 +55,8 @@ its values remain on the clipboard.
 - **The index.** Summaries hold names, usernames, hosts, flags, folders and
   card brand with the last four digits. Passwords, codes, card numbers and
   notes are never in it.
+- **Sends** reach the app without their text, key or access link. The editor
+  asks for the text when you edit a Send, and the daemon copies links.
 - **Recovery.** If the CLI stops while unlocked, the next request restarts
   it with the session key, which reopens the vault without the password.
 - **Locking** never waits behind other work. It takes the session out first,

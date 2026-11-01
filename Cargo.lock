@@ -378,6 +378,7 @@ dependencies = [
 name = "countersign-bw"
 version = "0.1.0"
 dependencies = [
+ "base64",
  "bytes",
  "http-body-util",
  "hyper",

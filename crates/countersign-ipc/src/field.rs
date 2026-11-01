@@ -165,6 +165,21 @@ pub fn redact(item: &Value) -> (Value, Vec<Field>) {
     (out, present)
 }
 
+/// A Send for listing: everything but its text and the key that opens it,
+/// which the access link also carries.
+pub fn redact_send(send: &Value) -> Value {
+    let mut out = send.clone();
+    if let Some(object) = out.as_object_mut() {
+        for key in ["key", "accessUrl", "accessId", "password"] {
+            object.remove(key);
+        }
+    }
+    if let Some(text) = out.get_mut("text").and_then(Value::as_object_mut) {
+        text.remove("text");
+    }
+    out
+}
+
 /// Hides the rest of an item that requires the master password: its notes
 /// and custom text fields, which otherwise show in full. Call after
 /// [`redact`] until the password has been entered for the item.
@@ -192,6 +207,23 @@ pub fn redact_protected(item: &mut Value, present: &mut Vec<Field>) {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn sends_lose_their_text_and_key() {
+        let send = json!({
+            "id": "5d1c", "name": "Wi-Fi", "type": 0, "key": "k", "accessId": "a",
+            "accessUrl": "https://send.bitwarden.eu/#a/k", "passwordSet": true,
+            "text": { "text": "hunter2", "hidden": true }
+        });
+        let out = redact_send(&send);
+        assert_eq!(out["name"], "Wi-Fi");
+        assert_eq!(out["text"], json!({ "hidden": true }));
+        assert_eq!(out["passwordSet"], true);
+        for key in ["key", "accessId", "accessUrl"] {
+            assert!(out.get(key).is_none(), "{key}");
+        }
+        assert!(!out.to_string().contains("hunter2"));
+    }
 
     fn login() -> Value {
         json!({

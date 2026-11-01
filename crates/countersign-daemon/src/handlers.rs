@@ -6,7 +6,7 @@ use std::sync::Arc;
 use countersign_bw::{GenerateOptions as BwGenerate, SessionKey};
 use countersign_ipc::{
     ErrorCode, Field, GenerateOptions, IpcError, PROTOCOL_VERSION, Request, Response, Secret, TerminalLaunch,
-    TotpCode, VaultState, redact, redact_protected,
+    TotpCode, VaultState, redact, redact_protected, redact_send,
 };
 use secrecy::{ExposeSecret, SecretString};
 use serde_json::Value;
@@ -210,6 +210,15 @@ impl Daemon {
                 let (item, secret_fields) = redact(&edited);
                 Ok(Response::Item { item, secret_fields })
             }
+            R::SetFavorite { id, favorite } => {
+                self.touch();
+                let client = self.client().await?;
+                let mut item = client.get_item(&id).await.map_err(ipc_error)?;
+                item["favorite"] = Value::from(favorite);
+                client.edit_item(&id, &item).await.map_err(ipc_error)?;
+                self.changed(&client).await;
+                Ok(Response::Ok)
+            }
             R::DeleteItem { id, permanent } => {
                 self.touch();
                 let client = self.client().await?;
@@ -274,22 +283,57 @@ impl Daemon {
                 Ok(Response::Ok)
             }
             R::Sends => {
-                let values = self.client().await?.list_sends().await.map_err(ipc_error)?;
-                Ok(Response::List { values })
+                // Not `bw serve`: its Send list never refreshes; see
+                // `Cli::send_list`.
+                let key = self.session_key()?;
+                let values = self.cli()?.send_list(&key).await.map_err(ipc_error)?;
+                Ok(Response::List { values: values.iter().map(redact_send).collect() })
+            }
+            R::SendForEdit { id } => {
+                self.touch();
+                Ok(Response::Json { value: self.client().await?.get_send(&id).await.map_err(ipc_error)? })
+            }
+            R::CopySendLink { id } => {
+                let send = self.client().await?.get_send(&id).await.map_err(ipc_error)?;
+                let Some(link) = send["accessUrl"].as_str().filter(|l| !l.is_empty()) else {
+                    return Err(IpcError::new(ErrorCode::NotFound, "This Send has no link."));
+                };
+                self.copy_value(Zeroizing::new(link.to_owned()), "Send link".into()).await
             }
             R::CreateSend { send, file } => {
                 self.touch();
                 let client = self.client().await?;
                 let created = match file {
                     None => client.create_send(&send).await.map_err(ipc_error)?,
-                    Some(_) => return Err(invalid("File Sends are not available yet.")),
+                    Some(path) => {
+                        let meta = tokio::fs::metadata(&path)
+                            .await
+                            .map_err(|e| invalid(format!("Cannot read the file: {e}")))?;
+                        if !meta.is_file() {
+                            return Err(invalid("Choose a file."));
+                        }
+                        if meta.len() > ATTACHMENT_LIMIT {
+                            return Err(invalid("A file Send can be at most 500 MB."));
+                        }
+                        let path = path.canonicalize().map_err(|e| invalid(e.to_string()))?;
+                        let mut send = send;
+                        send["type"] = Value::from(1);
+                        send["text"] = Value::Null;
+                        send["file"] = serde_json::json!({ "fileName": path.to_string_lossy() });
+                        let key = self.session_key()?;
+                        let created = self.cli()?.send_create_file(&key, &send).await.map_err(ipc_error)?;
+                        // The CLI wrote the Send to the shared profile; let
+                        // `bw serve` see it.
+                        client.sync().await.map_err(ipc_error)?;
+                        created
+                    }
                 };
-                Ok(Response::Json { value: created })
+                Ok(Response::Json { value: redact_send(&created) })
             }
             R::EditSend { id, send } => {
                 self.touch();
                 let edited = self.client().await?.edit_send(&id, &send).await.map_err(ipc_error)?;
-                Ok(Response::Json { value: edited })
+                Ok(Response::Json { value: redact_send(&edited) })
             }
             R::DeleteSend { id } => {
                 self.touch();
@@ -299,7 +343,7 @@ impl Daemon {
             R::RemoveSendPassword { id } => {
                 self.touch();
                 let send = self.client().await?.remove_send_password(&id).await.map_err(ipc_error)?;
-                Ok(Response::Json { value: send })
+                Ok(Response::Json { value: redact_send(&send) })
             }
             R::Settings => Ok(Response::Settings { settings: self.settings() }),
             R::UpdateSettings { settings: new } => {

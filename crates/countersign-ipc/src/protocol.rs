@@ -10,7 +10,7 @@ use crate::model::{
 use crate::secret::Secret;
 
 /// Bumped whenever a message changes incompatibly.
-pub const PROTOCOL_VERSION: u32 = 1;
+pub const PROTOCOL_VERSION: u32 = 2;
 
 /// The largest line either side accepts.
 pub const MAX_FRAME: usize = 64 << 20;
@@ -97,6 +97,11 @@ pub enum Request {
     ItemForEdit {
         id: String,
     },
+    /// Stars or unstars an item. Nothing secret reaches the app.
+    SetFavorite {
+        id: String,
+        favorite: bool,
+    },
     CreateItem {
         item: Value,
     },
@@ -134,7 +139,18 @@ pub enum Request {
         item_id: String,
         attachment_id: String,
     },
+    /// Lists Sends without their text, key or access link; see
+    /// [`crate::redact_send`].
     Sends,
+    /// The whole Send, text included, for the editor.
+    SendForEdit {
+        id: String,
+    },
+    /// Copies a Send's access link. The link holds the key that opens the
+    /// Send, so only the daemon reads it.
+    CopySendLink {
+        id: String,
+    },
     /// Creates a Send. A file Send reads `file`; text Sends leave it empty.
     CreateSend {
         send: Value,
