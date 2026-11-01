@@ -149,7 +149,8 @@ If you use your own CLI, update it as you normally would.
    ```
 
    The last line removes your settings, the CLI Countersign installed and its
-   CLI profile.
+   CLI profile. If you installed with `XDG_BIN_HOME` or `XDG_DATA_HOME` set,
+   or keep your configuration elsewhere, use those folders instead.
 
 ## Troubleshooting
 

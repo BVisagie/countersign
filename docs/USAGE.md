@@ -18,9 +18,10 @@
 3. **Unlock** with your master password.
 
 Your session lives in Countersign's background service, `countersignd`,
-which the app starts when needed. The app receives a secret only when it
-needs one: when you reveal a field, generate a password, or edit an item or
-a Send, which loads the whole item into the editor.
+which the app starts when needed. The app receives secrets only to show or
+edit them: an item's notes and live verification code when you open it, a
+field you reveal, a password you generate, and the whole item or Send when
+you edit it.
 
 ## Quick access
 
@@ -49,9 +50,11 @@ The sidebar filters the vault: all items, favorites, each item type, your
 folders, organization collections and the trash. **Tools** holds the
 password generator and Send.
 
-Select an item to see it. Secrets stay masked until you press the eye
-button, and hide again after a minute. Verification codes count down live
-(they need Bitwarden Premium).
+Select an item to see it. Passwords, card numbers, security codes and
+hidden fields stay masked until you press the eye button, and hide again
+after a minute. Notes show in full, except on items that ask for the master
+password. Verification codes show and count down live (they need Bitwarden
+Premium).
 Each field has a copy button, websites open in your browser, and the item
 shows its password history and attachments.
 
@@ -85,6 +88,11 @@ shows its password history and attachments.
 - Copies made while the main window is not focused, for example from quick
   access, show a desktop notification. It goes away when the copy clears.
 - Locking clears Countersign's copy straight away.
+
+All of this covers the copies Countersign makes: its copy buttons, `Enter`
+and the copy shortcuts. Text you select and copy yourself, for example in
+the editor or from a revealed field, is an ordinary copy: it is not marked
+for clipboard history and is not cleared.
 
 ## Editing
 
