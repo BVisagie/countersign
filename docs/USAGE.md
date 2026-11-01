@@ -91,8 +91,8 @@ shows its password history and attachments.
 
 All of this covers the copies Countersign makes: its copy buttons, `Enter`
 and the copy shortcuts. Text you select and copy yourself, for example in
-the editor or from a revealed field, is an ordinary copy: it is not marked
-for clipboard history and is not cleared.
+the editor, is an ordinary copy: it is not marked for clipboard history and
+is not cleared.
 
 ## Editing
 
