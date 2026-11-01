@@ -53,6 +53,9 @@ pub(crate) struct CopyTimers {
     /// follow-up can re-announce the copy accurately.
     pub clear_at: Option<Instant>,
     pub item_name: Option<String>,
+    /// Decides whether a pending code follow-up replaces the password or is
+    /// cancelled; see `copy::FollowUpState`.
+    pub follow_up_state: Option<Arc<crate::copy::FollowUpState>>,
 }
 
 impl CopyTimers {
@@ -62,6 +65,7 @@ impl CopyTimers {
         }
         self.clear_at = None;
         self.item_name = None;
+        self.follow_up_state = None;
     }
 }
 

@@ -7,7 +7,7 @@
 //! cancelled.
 
 use std::sync::Arc;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::time::Duration;
 
 use countersign_ipc::{ClipboardEvent, ClipboardState, ErrorCode, Event, Field, IpcError, Response};
@@ -158,7 +158,12 @@ impl Daemon {
         after_secs: u32,
     ) {
         let me = self.clone();
+        let state = Arc::new(FollowUpState::default());
+        let decided = state.clone();
         let task = tokio::spawn(async move {
+            // However the task ends, a later skip must not claim to keep a
+            // password the follow-up stopped tracking.
+            let _done = Finish(decided.clone());
             tokio::time::sleep(Duration::from_secs(u64::from(after_secs))).await;
             // Leave the clipboard alone if the password was replaced.
             if !me.clipboard.is_current(generation) || me.epoch() != epoch {
@@ -181,6 +186,12 @@ impl Daemon {
             let clear_secs = me.settings().clipboard_clear_secs;
             // The clipboard replaces the password only if it is still ours
             // and the vault is still open when the code takes over.
+            // Claim the replacement before the code is published: publishing
+            // it ends the password's offer, so a skip must win before that
+            // point to keep the password, or stay silent after it.
+            if !decided.try_replace() {
+                return;
+            }
             match me.put(code, epoch, Some(generation), clear_secs).await {
                 Ok(next) => {
                     me.schedule_clear(next, clear_secs);
@@ -196,21 +207,28 @@ impl Daemon {
                 Err(e) => tracing::warn!("copying the verification code failed: {e}"),
             }
         });
-        if let Some(old) = self.copy_timers.lock().expect("timers").follow_up.replace(task) {
+        let mut timers = self.copy_timers.lock().expect("timers");
+        timers.follow_up_state = Some(state);
+        if let Some(old) = timers.follow_up.replace(task) {
             old.abort();
         }
     }
 
     /// Cancels a pending one-time-code replacement, keeping the password.
     /// Re-announces the copy without the follow-up, so every receipt and
-    /// notification stops counting down to it.
+    /// notification stops counting down to it. Only when the skip wins
+    /// against a replacement already under way: then the code is withdrawn.
     pub fn skip_follow_up(&self) {
         let (remaining, item_name) = {
             let mut timers = self.copy_timers.lock().expect("timers");
-            match timers.follow_up.take() {
-                Some(task) if !task.is_finished() => task.abort(),
-                // Nothing pending: the code already replaced the password.
-                _ => return,
+            let won = timers.follow_up_state.as_ref().is_some_and(|s| s.try_cancel());
+            if !won {
+                // The code already replaced the password, or the follow-up
+                // ended; its own announcement stands.
+                return;
+            }
+            if let Some(task) = timers.follow_up.take() {
+                task.abort();
             }
             let remaining = timers.clear_at.map(|at| at.saturating_duration_since(std::time::Instant::now()));
             (remaining, timers.item_name.clone())
@@ -232,5 +250,63 @@ impl Daemon {
 
     fn emit_clipboard(&self, clipboard: ClipboardEvent) {
         self.emit(Event::Clipboard { clipboard });
+    }
+}
+
+/// Settles, exactly once, whether a code follow-up replaces the password,
+/// is cancelled by "Keep password", or ends without either.
+#[derive(Debug, Default)]
+pub(crate) struct FollowUpState(AtomicU8);
+
+impl FollowUpState {
+    const PENDING: u8 = 0;
+    const REPLACED: u8 = 1;
+    const CANCELLED: u8 = 2;
+    const ENDED: u8 = 3;
+
+    fn settle(&self, to: u8) -> bool {
+        self.0.compare_exchange(Self::PENDING, to, Ordering::SeqCst, Ordering::SeqCst).is_ok()
+    }
+
+    /// The follow-up takes the clipboard; false if a skip came first.
+    pub fn try_replace(&self) -> bool {
+        self.settle(Self::REPLACED)
+    }
+
+    /// "Keep password"; false if the code already took over or the
+    /// follow-up ended.
+    pub fn try_cancel(&self) -> bool {
+        self.settle(Self::CANCELLED)
+    }
+}
+
+/// Marks a follow-up ended when its task stops, unless it was settled.
+struct Finish(Arc<FollowUpState>);
+
+impl Drop for Finish {
+    fn drop(&mut self) {
+        self.0.settle(FollowUpState::ENDED);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn follow_up_is_settled_once() {
+        // A skip during the replacement loses once the code took over...
+        let state = FollowUpState::default();
+        assert!(state.try_replace());
+        assert!(!state.try_cancel());
+        // ...and wins before it, refusing the replacement.
+        let state = FollowUpState::default();
+        assert!(state.try_cancel());
+        assert!(!state.try_replace());
+        // A follow-up that ended cannot be "kept".
+        let state = Arc::new(FollowUpState::default());
+        drop(Finish(state.clone()));
+        assert!(!state.try_cancel());
+        assert!(!state.try_replace());
     }
 }
