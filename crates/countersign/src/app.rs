@@ -20,6 +20,10 @@ enum Backend {
     Demo(Rc<Demo>),
 }
 
+/// The id of the copy notification; the main window withdraws it when it
+/// takes focus, since its own receipt takes over.
+pub const CLIPBOARD_NOTIFICATION: &str = "countersign-clipboard";
+
 /// Something that shows app state: the main window or the quick panel.
 pub trait View {
     fn status_changed(&self, status: &Status);
@@ -188,6 +192,8 @@ impl App {
         if now == VaultState::Unlocked && was != VaultState::Unlocked {
             self.schedule_vault_reload();
         } else if now != VaultState::Unlocked && was == VaultState::Unlocked {
+            // Locking ends every copy, including one another app replaced.
+            self.gtk.withdraw_notification(CLIPBOARD_NOTIFICATION);
             *self.vault.borrow_mut() = Rc::new(VaultSnapshot::default());
             let vault = self.vault.borrow().clone();
             self.each_view(|v| v.vault_changed(&vault));
@@ -286,7 +292,6 @@ impl App {
     /// Tells the user about a copy made outside the main window, such as
     /// from quick access, which closes as it copies.
     fn notify_clipboard(&self, event: &ClipboardEvent) {
-        const ID: &str = "countersign-clipboard";
         if std::env::var_os("COUNTERSIGN_SCREENSHOT").is_some() {
             return;
         }
@@ -294,7 +299,7 @@ impl App {
         // is out of date once it is focused, as it is once the value clears.
         let focused = crate::ui::window::current().is_some_and(|w| w.window.is_active());
         if event.state == ClipboardState::Cleared || focused {
-            self.gtk.withdraw_notification(ID);
+            self.gtk.withdraw_notification(CLIPBOARD_NOTIFICATION);
             return;
         }
         let notification = gio::Notification::new(&event.label);
@@ -315,7 +320,7 @@ impl App {
         if event.state == ClipboardState::Failed {
             notification.set_priority(gio::NotificationPriority::High);
         }
-        self.gtk.send_notification(Some(ID), &notification);
+        self.gtk.send_notification(Some(CLIPBOARD_NOTIFICATION), &notification);
     }
 
     pub fn show_main(self: &Rc<Self>) {

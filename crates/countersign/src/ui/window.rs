@@ -604,6 +604,14 @@ impl MainWindow {
 
         {
             let app = self.app.clone();
+            self.window.connect_is_active_notify(move |window| {
+                if window.is_active() {
+                    app.gtk.withdraw_notification(crate::app::CLIPBOARD_NOTIFICATION);
+                }
+            });
+        }
+        {
+            let app = self.app.clone();
             self.window.connect_close_request(move |window| {
                 if app.settings.borrow().close_to_background {
                     window.set_visible(false);

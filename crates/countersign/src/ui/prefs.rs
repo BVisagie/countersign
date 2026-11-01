@@ -211,7 +211,10 @@ fn build(app: &Rc<App>) -> adw::PreferencesDialog {
             interval.clone(),
             background.clone(),
         );
-        move || {
+        // Reads the controls onto the latest settings when the save fires,
+        // so it neither resends an older value nor undoes a change made
+        // elsewhere in the meantime, such as choosing a CLI.
+        let commit: Rc<dyn Fn()> = Rc::new(move || {
             let current = app.settings.borrow().clone();
             let next = Settings {
                 clipboard_clear_secs: clear.value() as u32,
@@ -224,18 +227,18 @@ fn build(app: &Rc<App>) -> adw::PreferencesDialog {
                 close_to_background: background.is_active(),
                 ..current.clone()
             };
-            // A newer value replaces any save still waiting, including a
-            // change back to what is already stored.
+            if next != current {
+                save(&app, next);
+            }
+        });
+        move || {
             if let Some(source) = pending.borrow_mut().take() {
                 source.remove();
             }
-            if next == current {
-                return;
-            }
-            let (app, slot) = (app.clone(), pending.clone());
+            let (commit, slot) = (commit.clone(), pending.clone());
             let source = glib::timeout_add_local_once(Duration::from_millis(300), move || {
                 slot.borrow_mut().take();
-                save(&app, next);
+                commit();
             });
             *pending.borrow_mut() = Some(source);
         }

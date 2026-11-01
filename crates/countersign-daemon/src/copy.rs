@@ -117,18 +117,17 @@ impl Daemon {
         let task = tokio::spawn(async move {
             tokio::time::sleep(Duration::from_secs(u64::from(after_secs))).await;
             let clipboard = me.clipboard.clone();
-            let cleared = tokio::task::spawn_blocking(move || clipboard.clear_if_ours(Some(generation)))
-                .await
-                .unwrap_or(false);
-            if cleared {
-                me.emit_clipboard(ClipboardEvent {
-                    state: ClipboardState::Cleared,
-                    label: "Clipboard cleared".into(),
-                    item_name: None,
-                    clears_in: None,
-                    follow_up_in: None,
-                });
-            }
+            let _ = tokio::task::spawn_blocking(move || clipboard.clear_if_ours(Some(generation))).await;
+            // Report the end of this copy even if another app replaced it
+            // first. Only the current copy's timer is alive, so this never
+            // speaks for a newer copy.
+            me.emit_clipboard(ClipboardEvent {
+                state: ClipboardState::Cleared,
+                label: "Clipboard cleared".into(),
+                item_name: None,
+                clears_in: None,
+                follow_up_in: None,
+            });
         });
         if let Some(old) = self.copy_timers.lock().expect("timers").clear.replace(task) {
             old.abort();
