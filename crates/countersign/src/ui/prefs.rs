@@ -169,7 +169,10 @@ fn build(app: &Rc<App>) -> adw::PreferencesDialog {
             glib::spawn_future_local(async move {
                 let Ok(file) = chooser.open_future(window.as_ref()).await else { return };
                 let Some(path) = file.path() else { return };
-                save(&app, Settings { cli_path: Some(path), ..app.settings.borrow().clone() });
+                // Build the value first: a borrow inside the call would outlive
+                // it and clash with `save`'s own borrow.
+                let settings = Settings { cli_path: Some(path), ..app.settings.borrow().clone() };
+                save(&app, settings);
                 dialog.close();
             });
         });
