@@ -18,6 +18,17 @@ use gtk::{gdk, gio, glib};
 
 const BASE_CSS: &str = include_str!("style.css");
 
+thread_local! {
+    /// Colors for digits and symbols in generated values: the theme's blue
+    /// and orange, or libadwaita's.
+    static HIGHLIGHTS: RefCell<(String, String)> = RefCell::new(("#3584e4".into(), "#e66100".into()));
+}
+
+/// The current colors for digits and for symbols.
+pub fn highlights() -> (String, String) {
+    HIGHLIGHTS.with(|h| h.borrow().clone())
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct Rgb(u8, u8, u8);
 
@@ -207,6 +218,11 @@ fn current_css() -> (String, Option<bool>) {
         .and_then(|dir| std::fs::read_to_string(dir.join("colors.toml")).ok())
         .and_then(|text| Palette::from_toml(&text));
     let dark = palette.as_ref().map(|p| p.dark);
+    let highlights = palette
+        .as_ref()
+        .map(|p| (p.tones[0].hex(), p.tones[4].hex()))
+        .unwrap_or_else(|| ("#3584e4".into(), "#e66100".into()));
+    HIGHLIGHTS.with(|h| *h.borrow_mut() = highlights);
     if let Some(palette) = palette {
         css.push_str(&palette.css(hyprland_rounding().unwrap_or(0)));
     }

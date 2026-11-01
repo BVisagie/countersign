@@ -56,12 +56,14 @@ enum Filter {
     Folder(Option<String>),
     Collection(String),
     Trash,
+    /// Not a filter: the generator page.
+    Generator,
 }
 
 impl Filter {
     fn matches(&self, item: &ItemSummary) -> bool {
         match self {
-            Filter::All | Filter::Trash => true,
+            Filter::All | Filter::Trash | Filter::Generator => true,
             Filter::Favorites => item.favorite,
             Filter::Kind(kind) => item.kind == *kind,
             Filter::Folder(folder) => item.folder_id == *folder,
@@ -228,6 +230,8 @@ pub struct MainWindow {
     detail_page: adw::NavigationPage,
     pub nav: adw::NavigationSplitView,
     pub split: adw::OverlaySplitView,
+    content: gtk::Stack,
+    generator: Rc<super::generator::Generator>,
     items: RefCell<Vec<Rc<ItemSummary>>>,
     trash: RefCell<Vec<Rc<ItemSummary>>>,
     searcher: RefCell<Searcher>,
@@ -305,6 +309,7 @@ impl MainWindow {
         section.append(Some("Sync now"), Some("win.sync"));
         menu.append_section(None, &section);
         let section = gio::Menu::new();
+        section.append(Some("Password generator"), Some("win.generator"));
         section.append(Some("Settings"), Some("app.settings"));
         section.append(Some("Lock"), Some("win.lock"));
         section.append(Some("Sign out…"), Some("win.sign-out"));
@@ -347,7 +352,7 @@ impl MainWindow {
             let toasts = toasts.clone();
             Rc::new(move |message: &str| toasts.add_toast(adw::Toast::new(message)))
         };
-        let detail = Detail::new(app, notify);
+        let detail = Detail::new(app, notify.clone());
         let detail_header = adw::HeaderBar::builder().show_title(false).build();
         let detail_view = adw::ToolbarView::new();
         detail_view.add_top_bar(&detail_header);
@@ -361,14 +366,26 @@ impl MainWindow {
             .max_sidebar_width(400.0)
             .sidebar_width_fraction(0.4)
             .build();
+        let generator_toggle = gtk::ToggleButton::builder()
+            .icon_name("sidebar-show-symbolic")
+            .tooltip_text("Show sidebar")
+            .css_classes(["flat"])
+            .build();
+        let generator =
+            super::generator::Generator::new(app, notify.clone(), Some(generator_toggle.upcast_ref()));
+        let content = gtk::Stack::new();
+        content.add_named(&nav, Some("vault"));
+        content.add_named(&generator.root, Some("generator"));
         let split = adw::OverlaySplitView::builder()
             .sidebar(&sidebar_view)
-            .content(&nav)
+            .content(&content)
             .min_sidebar_width(210.0)
             .max_sidebar_width(250.0)
             .build();
-        sidebar_toggle.bind_property("active", &split, "show-sidebar").bidirectional().build();
-        split.bind_property("collapsed", &sidebar_toggle, "visible").sync_create().build();
+        for toggle in [&sidebar_toggle, &generator_toggle] {
+            toggle.bind_property("active", &split, "show-sidebar").bidirectional().build();
+            split.bind_property("collapsed", toggle, "visible").sync_create().build();
+        }
 
         let wide =
             adw::Breakpoint::new(adw::BreakpointCondition::parse("max-width: 980sp").expect("condition"));
@@ -426,6 +443,8 @@ impl MainWindow {
             detail_page,
             nav,
             split,
+            content,
+            generator,
             items: RefCell::default(),
             trash: RefCell::default(),
             searcher: RefCell::default(),
@@ -471,6 +490,12 @@ impl MainWindow {
             });
         });
         action("sign-out", |me| confirm_sign_out(&me.app, me.window.upcast_ref()));
+        action("generator", |me| {
+            let index = me.filters.borrow().iter().position(|f| *f == Filter::Generator);
+            if let Some(row) = index.and_then(|i| me.sidebar.row_at_index(i as i32)) {
+                me.sidebar.select_row(Some(&row));
+            }
+        });
         action("focus-search", |me| {
             me.search.grab_focus();
             me.search.select_region(0, -1);
@@ -478,6 +503,17 @@ impl MainWindow {
         self.app.gtk.set_accels_for_action("win.lock", &["<Control>l"]);
         self.app.gtk.set_accels_for_action("win.sync", &["<Control>r"]);
         self.app.gtk.set_accels_for_action("win.focus-search", &["<Control>f"]);
+        self.app.gtk.set_accels_for_action("win.generator", &["<Control>g"]);
+        {
+            // Keep "Synced N minutes ago" current.
+            let weak = weak.clone();
+            glib::timeout_add_seconds_local(60, move || {
+                let Some(me) = weak.upgrade() else { return glib::ControlFlow::Break };
+                let status = me.app.status.borrow().clone();
+                me.status_changed(&status);
+                glib::ControlFlow::Continue
+            });
+        }
 
         {
             let weak = weak.clone();
@@ -485,8 +521,14 @@ impl MainWindow {
                 let (Some(me), Some(row)) = (weak.upgrade(), row) else { return };
                 let filter = me.filters.borrow().get(row.index() as usize).cloned();
                 if let Some(filter) = filter {
-                    *me.filter.borrow_mut() = filter;
-                    me.refresh_list();
+                    let tool = filter == Filter::Generator;
+                    me.content.set_visible_child_name(if tool { "generator" } else { "vault" });
+                    if tool {
+                        me.generator.ensure_value();
+                    } else {
+                        *me.filter.borrow_mut() = filter;
+                        me.refresh_list();
+                    }
                     if me.split.is_collapsed() {
                         me.split.set_show_sidebar(false);
                     }
@@ -556,6 +598,7 @@ impl MainWindow {
                 let Some(me) = weak.upgrade() else { return glib::Propagation::Proceed };
                 // Leave keys to an open dialog, such as the re-prompt.
                 if me.stack.visible_child_name().as_deref() != Some("vault")
+                    || me.content.visible_child_name().as_deref() != Some("vault")
                     || me.window.visible_dialog().is_some()
                 {
                     return glib::Propagation::Proceed;
@@ -729,9 +772,15 @@ impl MainWindow {
                 add_row(&mut filters, none, "folder-symbolic", "No folder", Some(n));
             }
         }
-        if !vault.collections.is_empty() {
-            push_title(&mut filters, "COLLECTIONS");
-            for collection in &vault.collections {
+        // Collections, under the organization that owns them.
+        for organization in &vault.organizations {
+            let owned: Vec<_> =
+                vault.collections.iter().filter(|c| c.organization_id == organization.id).collect();
+            if owned.is_empty() {
+                continue;
+            }
+            push_title(&mut filters, &organization.name.to_uppercase());
+            for collection in owned {
                 let f = Filter::Collection(collection.id.clone());
                 let n = count(&f);
                 add_row(&mut filters, f, "user-bookmarks-symbolic", &collection.name, Some(n));
@@ -739,6 +788,8 @@ impl MainWindow {
         }
         push_title(&mut filters, "");
         add_row(&mut filters, Filter::Trash, "user-trash-symbolic", "Trash", Some(vault.trash.len()));
+        push_title(&mut filters, "TOOLS");
+        add_row(&mut filters, Filter::Generator, "dialog-password-symbolic", "Generator", None);
         *self.filters.borrow_mut() = filters;
         let index = self.filters.borrow().iter().position(|f| *f == selected).unwrap_or(0);
         if let Some(row) = self.sidebar.row_at_index(index as i32) {
@@ -823,6 +874,9 @@ impl View for MainWindow {
         let account = status.account.as_ref();
         self.account_email.set_label(account.and_then(|a| a.email.as_deref()).unwrap_or("Not signed in"));
         self.account_server.set_label(&server_name(account.and_then(|a| a.server_url.as_deref())));
+        if status.vault != VaultState::Unlocked {
+            self.generator.clear();
+        }
         self.sync_label.set_label(&match (status.syncing, &status.last_sync) {
             (true, _) => "Syncing…".to_owned(),
             (false, Some(when)) => format!("Synced {}", relative_time(when)),

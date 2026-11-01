@@ -35,7 +35,12 @@ fn switch(title: &str, subtitle: &str, active: bool) -> adw::SwitchRow {
 
 /// A row showing text you can copy, such as a Hyprland binding.
 fn snippet(title: &str, text: &'static str) -> adw::ActionRow {
-    let row = adw::ActionRow::builder().title(title).subtitle(text).subtitle_selectable(true).build();
+    let row = adw::ActionRow::builder()
+        .title(title)
+        .subtitle(text)
+        .use_markup(false)
+        .subtitle_selectable(true)
+        .build();
     row.add_css_class("property");
     let copy = super::icon_button("edit-copy-symbolic", "Copy");
     copy.connect_clicked(move |button| {

@@ -99,6 +99,10 @@ pub fn run(app: &Rc<App>, dir: PathBuf) {
         settle().await;
         shot(main.window.upcast_ref(), "main-medium");
 
+        let _ = WidgetExt::activate_action(&main.window, "win.generator", None);
+        settle().await;
+        shot(main.window.upcast_ref(), "generator");
+
         let quick = quick::get_or_create(&app);
         background(quick.window.upcast_ref());
         quick.show();

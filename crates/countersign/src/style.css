@@ -117,6 +117,12 @@ listview.cs-items > row:selected .cs-item-subtitle { color: var(--cs-selection-f
 .cs-meta { font-size: 0.78em; color: var(--cs-muted); }
 .cs-totp-ring { color: var(--accent-color); }
 
+.cs-generated {
+  font-size: 1.7em; font-weight: 700; letter-spacing: 0.04em;
+  padding: 22px 18px; border: 1px solid var(--cs-line);
+  border-radius: var(--cs-radius-small); background-color: var(--card-bg-color);
+}
+
 .cs-empty-title { font-size: 1.1em; font-weight: 700; }
 .cs-empty-body { color: var(--cs-muted); }
 

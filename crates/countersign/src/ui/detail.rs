@@ -171,6 +171,14 @@ impl Detail {
             chips.append(&chip("Passkey"));
         }
         self.content.append(&chips);
+        if let Some(deleted) = text(&item["deletedDate"]) {
+            let banner = adw::Banner::builder()
+                .title(format!("In the trash since {}", short_date(&deleted)))
+                .revealed(true)
+                .build();
+            banner.set_margin_top(6);
+            self.content.append(&banner);
+        }
 
         match kind {
             ItemKind::Login => {

@@ -15,7 +15,8 @@ interface and the desktop integration around it.
 - **Quick access.** A launcher-style overlay: type a few letters, press
   Enter, and the password is on the clipboard. Recent items come first.
 - **The whole vault.** Logins, cards, identities, notes and SSH keys, with
-  folders, collections, favorites and trash. Secrets stay masked until you
+  folders, organization collections, favorites and trash, and a password and
+  passphrase generator. Secrets stay masked until you
   reveal them. Verification codes count down live.
 - **A clipboard that cleans up.** Copies clear themselves after 30 seconds
   and are marked so Omarchy's clipboard history skips them. After a password
@@ -81,6 +82,7 @@ point it at a CLI of your own in Settings instead.
 | `Ctrl+F` or `/` | Search |
 | `Ctrl+R` | Sync |
 | `Ctrl+L` | Lock |
+| `Ctrl+G` | Password generator |
 | `Ctrl+,` | Settings |
 | `Esc` | Clear the search, then close quick access |
 

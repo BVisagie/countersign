@@ -2,6 +2,7 @@
 
 pub mod detail;
 pub mod gates;
+pub mod generator;
 pub mod items;
 pub mod prefs;
 pub mod quick;
