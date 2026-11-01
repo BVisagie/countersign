@@ -77,6 +77,17 @@ fn published() -> Result<Option<u64>, Unreadable> {
     Ok(text.trim().parse().ok())
 }
 
+/// Whether a refused copy must clear the clipboard, from one reading of it:
+/// yes if it shows our value, and yes if it cannot be read, since our
+/// value may be there.
+fn should_withdraw(read: Result<Option<u64>, Unreadable>, generation: u64) -> bool {
+    match read {
+        Ok(Some(g)) => g == generation,
+        Ok(None) => false,
+        Err(Unreadable) => true,
+    }
+}
+
 impl Clipboard {
     /// Offers `value` on the clipboard and returns its generation. Blocking;
     /// call it from a blocking task.
@@ -153,7 +164,7 @@ impl Clipboard {
         if !allow() {
             // Withdraw our value; if the clipboard cannot be read, clear it
             // rather than risk leaving the value behind.
-            if matches!(published(), Ok(Some(g)) if g == generation) || published().is_err() {
+            if should_withdraw(published(), generation) {
                 let _ = copy::clear(ClipboardType::Regular, Seat::All);
             }
             return Err(Refused.into());
@@ -210,6 +221,14 @@ impl Clipboard {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn refused_copies_clear_when_unsure() {
+        assert!(should_withdraw(Ok(Some(7)), 7));
+        assert!(!should_withdraw(Ok(Some(8)), 7));
+        assert!(!should_withdraw(Ok(None), 7));
+        assert!(should_withdraw(Err(Unreadable), 7));
+    }
 
     fn value(text: &str) -> Zeroizing<String> {
         Zeroizing::new(text.to_owned())
