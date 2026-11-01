@@ -194,7 +194,6 @@ pub struct SignIn {
     email: gtk::Button,
     api_key: gtk::Button,
     error: gtk::Label,
-    progress: gtk::Box,
     progress_spinner: adw::Spinner,
     progress_text: gtk::Label,
     waiting: gtk::Box,
@@ -239,10 +238,11 @@ impl SignIn {
         let error = label("", &["cs-error"]);
         error.set_visible(false);
         error.set_wrap(true);
+        // Always laid out, so the centred page does not move as it shows.
         let progress = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         progress.set_halign(gtk::Align::Center);
-        progress.set_visible(false);
         let progress_spinner = adw::Spinner::new();
+        progress_spinner.set_visible(false);
         let progress_text = label("", &["cs-meta"]);
         progress_text.set_wrap(true);
         progress.append(&progress_spinner);
@@ -272,7 +272,6 @@ impl SignIn {
             email,
             api_key,
             error,
-            progress,
             progress_spinner,
             progress_text,
             waiting,
@@ -372,8 +371,7 @@ impl SignIn {
     /// button shows.
     fn show_progress(&self, text: Option<&str>, spinner: bool) {
         self.progress_text.set_label(text.unwrap_or(""));
-        self.progress_spinner.set_visible(spinner);
-        self.progress.set_visible(text.is_some());
+        self.progress_spinner.set_visible(spinner && text.is_some());
     }
 
     /// Makes the controls match what is running. The cloud can still be
