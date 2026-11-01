@@ -268,6 +268,7 @@ impl Demo {
                 let (item, secret_fields) = redact(&self.item(&id)?);
                 Ok(Response::Item { item, secret_fields })
             }
+            R::ItemForEdit { id } => Ok(Response::Json { value: self.item(&id)? }),
             R::Reveal { id, field } => {
                 let item = self.item(&id)?;
                 let value = match field {
@@ -325,6 +326,41 @@ impl Demo {
                     "vR8#qL2!mZ7@xT4$wN9&kP3s".chars().take(options.length.clamp(5, 24) as usize).collect()
                 };
                 Ok(Response::Secret { value: Secret::new(value) })
+            }
+            R::Sends => {
+                if self.state.borrow().vault != VaultState::Unlocked {
+                    return Err(IpcError::new(ErrorCode::Locked, "The vault is locked."));
+                }
+                let days = |n: i32| {
+                    gtk::glib::DateTime::now_utc()
+                        .and_then(|d| d.add_days(n))
+                        .and_then(|d| d.format("%Y-%m-%dT%H:%M:%S.000Z"))
+                        .map(|s| s.to_string())
+                        .unwrap_or_default()
+                };
+                Ok(Response::List {
+                    values: vec![
+                        json!({"id": id(201), "name": "Wi-Fi for guests", "type": 0, "text": {"hidden": true},
+                            "accessCount": 3, "deletionDate": days(6), "passwordSet": false, "disabled": false}),
+                        json!({"id": id(202), "name": "Signed lease", "type": 1,
+                            "file": {"fileName": "lease-2026.pdf", "sizeName": "1.4 MB"},
+                            "accessCount": 1, "maxAccessCount": 2, "deletionDate": days(2), "passwordSet": true, "disabled": false}),
+                        json!({"id": id(203), "name": "Staging database URL", "type": 0, "text": {"hidden": false},
+                            "accessCount": 0, "deletionDate": days(13), "passwordSet": false, "disabled": true}),
+                    ],
+                })
+            }
+            R::CopySendLink { .. } => {
+                self.emit(Event::Clipboard {
+                    clipboard: ClipboardEvent {
+                        state: ClipboardState::Copied,
+                        label: "Send link copied".into(),
+                        item_name: None,
+                        clears_in: Some(30),
+                        follow_up_in: None,
+                    },
+                });
+                Ok(Response::Ok)
             }
             R::Settings => Ok(Response::Settings { settings: self.state.borrow().settings.clone() }),
             R::UpdateSettings { settings } => {

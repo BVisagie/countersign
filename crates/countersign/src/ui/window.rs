@@ -58,12 +58,14 @@ enum Filter {
     Trash,
     /// Not a filter: the generator page.
     Generator,
+    /// Not a filter: the Send page.
+    Sends,
 }
 
 impl Filter {
     fn matches(&self, item: &ItemSummary) -> bool {
         match self {
-            Filter::All | Filter::Trash | Filter::Generator => true,
+            Filter::All | Filter::Trash | Filter::Generator | Filter::Sends => true,
             Filter::Favorites => item.favorite,
             Filter::Kind(kind) => item.kind == *kind,
             Filter::Folder(folder) => item.folder_id == *folder,
@@ -233,7 +235,11 @@ pub struct MainWindow {
     content: gtk::Stack,
     generator: Rc<super::generator::Generator>,
     generator_receipt: Rc<Receipt>,
+    sends: Rc<super::sends::Sends>,
+    sends_receipt: Rc<Receipt>,
     items: RefCell<Vec<Rc<ItemSummary>>>,
+    /// An item to select once it appears, after creating it.
+    pending_select: RefCell<Option<String>>,
     trash: RefCell<Vec<Rc<ItemSummary>>>,
     searcher: RefCell<Searcher>,
     account_email: gtk::Label,
@@ -325,6 +331,19 @@ impl MainWindow {
             adw::HeaderBar::builder().title_widget(&search).show_end_title_buttons(false).build();
         list_header.pack_start(&sidebar_toggle);
         list_header.pack_end(&menu_button);
+        let new_menu = gio::Menu::new();
+        for (label, kind) in
+            [("New login", "login"), ("New card", "card"), ("New identity", "identity"), ("New note", "note")]
+        {
+            new_menu.append(Some(label), Some(&format!("win.new-item::{kind}")));
+        }
+        new_menu.append(Some("New folder…"), Some("win.new-folder"));
+        let new_button = gtk::MenuButton::builder()
+            .icon_name("list-add-symbolic")
+            .menu_model(&new_menu)
+            .tooltip_text("New item (Ctrl+N)")
+            .build();
+        list_header.pack_end(&new_button);
         let list = ItemList::new(false);
         let list_scroll = gtk::ScrolledWindow::builder()
             .hscrollbar_policy(gtk::PolicyType::Never)
@@ -355,6 +374,7 @@ impl MainWindow {
         };
         let detail = Detail::new(app, notify.clone());
         let detail_header = adw::HeaderBar::builder().show_title(false).build();
+        detail_header.pack_end(&detail.actions);
         let detail_view = adw::ToolbarView::new();
         detail_view.add_top_bar(&detail_header);
         detail_view.set_content(Some(&detail.root));
@@ -381,16 +401,29 @@ impl MainWindow {
             Some(generator_toggle.upcast_ref()),
             generator_receipt.root.upcast_ref(),
         );
+        let sends_toggle = gtk::ToggleButton::builder()
+            .icon_name("sidebar-show-symbolic")
+            .tooltip_text("Show sidebar")
+            .css_classes(["flat"])
+            .build();
+        let sends_receipt = Receipt::new(app);
+        let sends = super::sends::Sends::new(
+            app,
+            notify.clone(),
+            Some(sends_toggle.upcast_ref()),
+            sends_receipt.root.upcast_ref(),
+        );
         let content = gtk::Stack::new();
         content.add_named(&nav, Some("vault"));
         content.add_named(&generator.root, Some("generator"));
+        content.add_named(&sends.root, Some("sends"));
         let split = adw::OverlaySplitView::builder()
             .sidebar(&sidebar_view)
             .content(&content)
             .min_sidebar_width(210.0)
             .max_sidebar_width(250.0)
             .build();
-        for toggle in [&sidebar_toggle, &generator_toggle] {
+        for toggle in [&sidebar_toggle, &generator_toggle, &sends_toggle] {
             toggle.bind_property("active", &split, "show-sidebar").bidirectional().build();
             split.bind_property("collapsed", toggle, "visible").sync_create().build();
         }
@@ -454,7 +487,10 @@ impl MainWindow {
             content,
             generator,
             generator_receipt,
+            sends,
+            sends_receipt,
             items: RefCell::default(),
+            pending_select: RefCell::default(),
             trash: RefCell::default(),
             searcher: RefCell::default(),
             account_email,
@@ -499,12 +535,24 @@ impl MainWindow {
             });
         });
         action("sign-out", |me| confirm_sign_out(&me.app, me.window.upcast_ref()));
-        action("generator", |me| {
-            let index = me.filters.borrow().iter().position(|f| *f == Filter::Generator);
-            if let Some(row) = index.and_then(|i| me.sidebar.row_at_index(i as i32)) {
-                me.sidebar.select_row(Some(&row));
-            }
-        });
+        {
+            let weak = weak.clone();
+            let new_item = gio::SimpleAction::new("new-item", Some(glib::VariantTy::STRING));
+            new_item.connect_activate(move |_, parameter| {
+                let Some(me) = weak.upgrade() else { return };
+                let kind = match parameter.and_then(|p| p.str()) {
+                    Some("card") => ItemKind::Card,
+                    Some("identity") => ItemKind::Identity,
+                    Some("note") => ItemKind::SecureNote,
+                    _ => ItemKind::Login,
+                };
+                me.new_item(kind);
+            });
+            self.window.add_action(&new_item);
+        }
+        action("new-folder", |me| me.ask_folder_name(None));
+        action("generator", |me| me.show_vault_filter(Filter::Generator));
+        action("sends", |me| me.show_vault_filter(Filter::Sends));
         action("focus-search", |me| {
             // Searching means the vault: leave the generator for it first.
             if me.content.visible_child_name().as_deref() != Some("vault") {
@@ -517,6 +565,7 @@ impl MainWindow {
         self.app.gtk.set_accels_for_action("win.sync", &["<Control>r"]);
         self.app.gtk.set_accels_for_action("win.focus-search", &["<Control>f"]);
         self.app.gtk.set_accels_for_action("win.generator", &["<Control>g"]);
+        self.app.gtk.set_accels_for_action("win.new-item::login", &["<Control>n"]);
         {
             // Keep "Synced N minutes ago" current.
             let weak = weak.clone();
@@ -529,20 +578,62 @@ impl MainWindow {
         }
 
         {
+            // Right-click a folder to rename or delete it.
+            let weak = weak.clone();
+            let right = gtk::GestureClick::new();
+            right.set_button(gdk::BUTTON_SECONDARY);
+            right.connect_pressed(move |_, _, _, y| {
+                let Some(me) = weak.upgrade() else { return };
+                let Some(row) = me.sidebar.row_at_y(y as i32) else { return };
+                let filter = me.filters.borrow().get(row.index() as usize).cloned();
+                let Some(Filter::Folder(Some(id))) = filter else { return };
+                let Some(folder) = me.app.vault.borrow().folders.iter().find(|f| f.id == id).cloned() else {
+                    return;
+                };
+                let popover = gtk::Popover::new();
+                let column = gtk::Box::new(gtk::Orientation::Vertical, 2);
+                for (label, rename) in [("Rename…", true), ("Delete…", false)] {
+                    let button = gtk::Button::builder().label(label).css_classes(["flat"]).build();
+                    let (me, folder, popover) = (me.clone(), folder.clone(), popover.clone());
+                    button.connect_clicked(move |_| {
+                        popover.popdown();
+                        if rename {
+                            me.ask_folder_name(Some(folder.clone()))
+                        } else {
+                            me.delete_folder(folder.clone())
+                        }
+                    });
+                    column.append(&button);
+                }
+                popover.set_child(Some(&column));
+                popover.set_parent(&row);
+                popover.connect_closed(|p| {
+                    let p = p.clone();
+                    glib::idle_add_local_once(move || p.unparent());
+                });
+                popover.popup();
+            });
+            self.sidebar.add_controller(right);
+        }
+        {
             let weak = weak.clone();
             self.sidebar.connect_row_selected(move |_, row| {
                 let (Some(me), Some(row)) = (weak.upgrade(), row) else { return };
                 let filter = me.filters.borrow().get(row.index() as usize).cloned();
                 if let Some(filter) = filter {
-                    // The selection, generator included, is what the sidebar
+                    // The selection, tool pages included, is what the sidebar
                     // restores after a sync rebuilds it.
-                    let tool = filter == Filter::Generator;
+                    let page = match filter {
+                        Filter::Generator => "generator",
+                        Filter::Sends => "sends",
+                        _ => "vault",
+                    };
                     *me.filter.borrow_mut() = filter;
-                    me.content.set_visible_child_name(if tool { "generator" } else { "vault" });
-                    if tool {
-                        me.generator.ensure_value();
-                    } else {
-                        me.refresh_list();
+                    me.content.set_visible_child_name(page);
+                    match page {
+                        "generator" => me.generator.ensure_value(),
+                        "sends" => {}
+                        _ => me.refresh_list(),
                     }
                     if me.split.is_collapsed() {
                         me.split.set_show_sidebar(false);
@@ -583,6 +674,9 @@ impl MainWindow {
             let weak = weak.clone();
             self.list.selection.connect_selected_item_notify(move |_| {
                 let Some(me) = weak.upgrade() else { return };
+                if me.detail.is_editing() {
+                    return;
+                }
                 let selected = me.list.selected();
                 me.detail.show(selected.as_ref().map(|i| i.id.as_str()));
                 if let Some(item) = selected {
@@ -611,10 +705,12 @@ impl MainWindow {
             let weak = weak.clone();
             keys.connect_key_pressed(move |_, key, _, state| {
                 let Some(me) = weak.upgrade() else { return glib::Propagation::Proceed };
-                // Leave keys to an open dialog, such as the re-prompt.
+                // Leave keys to an open dialog, such as the re-prompt, and to
+                // the editor, whose item may not be the list's selection.
                 if me.stack.visible_child_name().as_deref() != Some("vault")
                     || me.content.visible_child_name().as_deref() != Some("vault")
                     || me.window.visible_dialog().is_some()
+                    || me.detail.is_editing()
                 {
                     return glib::Propagation::Proceed;
                 }
@@ -805,6 +901,7 @@ impl MainWindow {
         add_row(&mut filters, Filter::Trash, "user-trash-symbolic", "Trash", Some(vault.trash.len()));
         push_title(&mut filters, "TOOLS");
         add_row(&mut filters, Filter::Generator, "dialog-password-symbolic", "Generator", None);
+        add_row(&mut filters, Filter::Sends, "send-to-symbolic", "Send", None);
         *self.filters.borrow_mut() = filters;
         let index = self.filters.borrow().iter().position(|f| *f == selected).unwrap_or(0);
         if let Some(row) = self.sidebar.row_at_index(index as i32) {
@@ -852,6 +949,114 @@ impl MainWindow {
 
 impl MainWindow {
     /// Selects a vault filter in the sidebar, which also shows the vault.
+    /// Opens the editor for a new item, in the folder being browsed.
+    fn new_item(self: &Rc<Self>, kind: ItemKind) {
+        if self.content.visible_child_name().as_deref() != Some("vault") {
+            self.show_vault_filter(Filter::All);
+        }
+        let folder = match &*self.filter.borrow() {
+            Filter::Folder(folder) => folder.clone(),
+            _ => None,
+        };
+        self.detail.create(kind, folder);
+        if self.nav.is_collapsed() {
+            self.nav.set_show_content(true);
+        }
+    }
+
+    /// Selects `id` now if the vault lists it, or as soon as it does.
+    pub fn select_when_listed(&self, id: &str) {
+        if self.items.borrow().iter().any(|i| i.id == id) {
+            self.list.select_by_id(id);
+        } else {
+            *self.pending_select.borrow_mut() = Some(id.to_owned());
+        }
+    }
+
+    /// While the editor is open the list stays put: a sync that rebuilds
+    /// it must not move the selection and close the editor.
+    pub fn set_editing(&self, editing: bool) {
+        self.list.view.set_sensitive(!editing);
+    }
+
+    /// Asks for a folder name: a new folder, or a rename of `folder`.
+    fn ask_folder_name(self: &Rc<Self>, folder: Option<countersign_ipc::Folder>) {
+        let name = adw::EntryRow::builder().title("Folder name").build();
+        if let Some(f) = &folder {
+            name.set_text(&f.name);
+        }
+        let list = gtk::ListBox::builder()
+            .css_classes(["boxed-list"])
+            .selection_mode(gtk::SelectionMode::None)
+            .build();
+        list.append(&name);
+        let renaming = folder.is_some();
+        let dialog = adw::AlertDialog::builder()
+            .heading(if renaming { "Rename folder" } else { "New folder" })
+            .extra_child(&list)
+            .close_response("cancel")
+            .default_response("save")
+            .build();
+        dialog.add_responses(&[("cancel", "Cancel"), ("save", if renaming { "Rename" } else { "Create" })]);
+        dialog.set_response_appearance("save", adw::ResponseAppearance::Suggested);
+        dialog.set_response_enabled("save", !name.text().trim().is_empty());
+        {
+            let dialog = dialog.clone();
+            name.connect_changed(move |row| {
+                dialog.set_response_enabled("save", !row.text().trim().is_empty())
+            });
+        }
+        name.set_activates_default(true);
+        let field = name.clone();
+        let me = self.clone();
+        dialog.connect_response(None, move |_, response| {
+            if response != "save" {
+                return;
+            }
+            let text = name.text().trim().to_owned();
+            if text.is_empty() {
+                return;
+            }
+            let request = match &folder {
+                Some(f) => Request::RenameFolder { id: f.id.clone(), name: text },
+                None => Request::CreateFolder { name: text },
+            };
+            let me = me.clone();
+            glib::spawn_future_local(async move {
+                if let Err(e) = me.app.request(request).await {
+                    me.toast(&e.message);
+                }
+            });
+        });
+        dialog.present(Some(&self.window));
+        field.grab_focus();
+    }
+
+    fn delete_folder(self: &Rc<Self>, folder: countersign_ipc::Folder) {
+        let dialog = adw::AlertDialog::builder()
+            .heading(format!("Delete “{}”?", folder.name))
+            .body("Its items are kept and move to No folder.")
+            .close_response("cancel")
+            .default_response("cancel")
+            .build();
+        dialog.add_responses(&[("cancel", "Cancel"), ("delete", "Delete")]);
+        dialog.set_response_appearance("delete", adw::ResponseAppearance::Destructive);
+        let me = self.clone();
+        dialog.connect_response(None, move |_, response| {
+            if response != "delete" {
+                return;
+            }
+            let (me, id) = (me.clone(), folder.id.clone());
+            glib::spawn_future_local(async move {
+                match me.app.request(Request::DeleteFolder { id }).await {
+                    Ok(_) => me.show_vault_filter(Filter::All),
+                    Err(e) => me.toast(&e.message),
+                }
+            });
+        });
+        dialog.present(Some(&self.window));
+    }
+
     fn show_vault_filter(&self, filter: Filter) {
         let index = self.filters.borrow().iter().position(|f| *f == filter);
         if let Some(row) = index.and_then(|i| self.sidebar.row_at_index(i as i32)) {
@@ -903,11 +1108,13 @@ impl View for MainWindow {
             self.unlock.focus();
         }
         if page == "vault" && previous.as_deref() != Some("vault") {
-            // Focus what is shown: the search, unless the generator is.
-            if self.content.visible_child_name().as_deref() == Some("vault") {
-                self.search.grab_focus();
-            } else {
-                self.generator.focus();
+            // Focus what is shown: the search, unless a tool page is.
+            match self.content.visible_child_name().as_deref() {
+                Some("generator") => self.generator.focus(),
+                Some("sends") => self.sends.focus(),
+                _ => {
+                    self.search.grab_focus();
+                }
             }
         }
         let account = status.account.as_ref();
@@ -915,6 +1122,7 @@ impl View for MainWindow {
         self.account_server.set_label(&server_name(account.and_then(|a| a.server_url.as_deref())));
         if status.vault != VaultState::Unlocked {
             self.generator.clear();
+            self.sends.clear();
         }
         self.update_sync_label(status);
         self.dot.set_css_classes(&match (status.vault, status.syncing) {
@@ -930,7 +1138,20 @@ impl View for MainWindow {
         self.detail.set_vault(vault);
         self.rebuild_sidebar(vault);
         self.refresh_list();
-        if let Some(id) = self.detail.current() {
+        let pending = self.pending_select.borrow_mut().take();
+        if let Some(id) = pending {
+            if vault.items.iter().any(|i| i.id == id) {
+                self.search.set_text("");
+                self.list.select_by_id(&id);
+            } else {
+                *self.pending_select.borrow_mut() = Some(id);
+            }
+        }
+        self.sends.vault_changed();
+        // A sync must not throw away an edit in progress.
+        if !self.detail.is_editing()
+            && let Some(id) = self.detail.current()
+        {
             self.detail.reload(Some(&id));
         }
     }
@@ -938,5 +1159,6 @@ impl View for MainWindow {
     fn clipboard(&self, event: &ClipboardEvent) {
         self.receipt.show(event);
         self.generator_receipt.show(event);
+        self.sends_receipt.show(event);
     }
 }

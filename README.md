@@ -18,6 +18,11 @@ interface and the desktop integration around it.
   folders, organization collections, favorites and trash, and a password and
   passphrase generator. Secrets stay masked until you
   reveal them. Verification codes count down live.
+- **Editing.** Create and edit every item type, with websites and custom
+  fields; manage folders and attachments; move items to an organization;
+  trash, restore or delete forever.
+- **Send.** Share text or a file through Bitwarden Send. A new Send's link
+  goes straight to the clipboard.
 - **A clipboard that cleans up.** Copies clear themselves after 30 seconds
   and are marked so Omarchy's clipboard history skips them. After a password
   copy, the item's one-time code replaces it a few seconds later.
@@ -31,6 +36,10 @@ interface and the desktop integration around it.
 | Omarchy Flexoki Light | Omarchy Tokyo Night |
 | --- | --- |
 | ![A card in a light theme](docs/screenshots/light-card.png) | ![Search in Tokyo Night](docs/screenshots/tokyo-night-search.png) |
+
+| Editing an item | Send |
+| --- | --- |
+| ![The item editor](docs/screenshots/edit.png) | ![The Send page](docs/screenshots/sends.png) |
 
 Screenshots use a fictional demo vault; see `scripts/screenshots.sh`.
 
@@ -82,6 +91,7 @@ point it at a CLI of your own in Settings instead.
 | `Ctrl+F` or `/` | Search |
 | `Ctrl+R` | Sync |
 | `Ctrl+L` | Lock |
+| `Ctrl+N` | New login |
 | `Ctrl+G` | Password generator |
 | `Ctrl+,` | Settings |
 | `Esc` | Clear the search, then close quick access |
