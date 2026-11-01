@@ -11,12 +11,12 @@ yet; you build it from source with one script.
 - **Build tools and libraries.** On Omarchy or Arch:
 
   ```bash
-  sudo pacman -S --needed base-devel git gtk4 libadwaita gtk4-layer-shell
+  sudo pacman -S --needed base-devel git gtk4 libadwaita gtk4-layer-shell vte4
   ```
 
-- **Optional: `vte4`**, for signing in inside Countersign
-  (`sudo pacman -S vte4`). Without it, Countersign opens your terminal for
-  sign-in instead.
+  `vte4` runs the Bitwarden CLI's sign-in inside Countersign. Omarchy does
+  not include it. The install script checks for these libraries and offers
+  to install any that are missing.
 - **Optional: a bar with a system tray** (StatusNotifierItem), for the tray
   icon. Everything else works without one.
 - **The official Bitwarden CLI.** Countersign can install it for you; see
@@ -38,12 +38,14 @@ The script builds Countersign and installs it for your user only:
 | Desktop entry | `~/.local/share/applications/io.github.bvisagie.Countersign.desktop` |
 | Icons | `~/.local/share/icons/hicolor/scalable/apps/io.github.bvisagie.Countersign.svg` and `~/.local/share/icons/hicolor/symbolic/apps/io.github.bvisagie.Countersign-symbolic.svg` |
 
-Nothing else on your system is changed. `XDG_BIN_HOME` and `XDG_DATA_HOME`
-move these folders if you set them. `~/.local/bin` needs to be on your
-`PATH`, as it is on Omarchy.
+`XDG_BIN_HOME` and `XDG_DATA_HOME` move these folders if you set them.
+`~/.local/bin` needs to be on your `PATH`, as it is on Omarchy.
 
-If `vte4` is missing, the script says so and builds without in-app sign-in.
-Install `vte4` and run the script again to add it.
+Before building, the script checks for the libraries in
+[Requirements](#requirements). If any are missing, it offers to install them
+with `sudo pacman -S --needed`, and pacman lists what it will install and
+asks before it changes anything. Run without a terminal, the script prints
+that command and stops instead. Nothing else on your system is changed.
 
 ## Add it to Hyprland
 
@@ -170,8 +172,7 @@ binding's command is `countersign --quick`.
 **No tray icon.** Your bar needs a StatusNotifierItem tray. The tray is
 optional; the main window and quick access do everything it does.
 
-**The sign-in terminal does not open.** Without `vte4`, Countersign runs
-`bw login` in your terminal through `xdg-terminal-exec`, which Omarchy
-provides. Install `vte4` and run `scripts/install.sh` again to sign in inside
-Countersign, or sign in with an API key instead (see
-[Using Countersign](USAGE.md#first-run)).
+**The build stops: "The system library `vte-2.91-gtk4` … was not found".**
+A library from [Requirements](#requirements) is missing; the message names
+it. Run `scripts/install.sh` in a terminal so it can offer to install it, or
+install the packages listed there yourself.
