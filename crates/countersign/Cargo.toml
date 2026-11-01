@@ -11,7 +11,7 @@ publish = false
 [features]
 default = ["terminal"]
 # Runs the official `bw login` inside the app. Needs the vte4 library.
-terminal = ["dep:vte4"]
+terminal = ["dep:vte4", "dep:libc"]
 
 [dependencies]
 adw.workspace = true
@@ -19,6 +19,7 @@ async-channel.workspace = true
 countersign-ipc.workspace = true
 gtk.workspace = true
 gtk4-layer-shell.workspace = true
+libc = { workspace = true, optional = true }
 ksni = { version = "0.3.7", default-features = false, features = ["blocking", "async-io"] }
 nucleo-matcher.workspace = true
 serde.workspace = true
