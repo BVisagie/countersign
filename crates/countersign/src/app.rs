@@ -48,6 +48,8 @@ pub struct App {
     pending_opens: Cell<u32>,
     /// The vault's items have arrived since it was last unlocked.
     loaded: Cell<bool>,
+    /// A sign-out from this app has not answered yet.
+    signing_out: Cell<bool>,
 }
 
 impl App {
@@ -75,6 +77,7 @@ impl App {
             last_activity: Cell::new(None),
             pending_opens: Cell::new(0),
             loaded: Cell::new(false),
+            signing_out: Cell::new(false),
         });
         let weak = Rc::downgrade(&app);
         glib::spawn_future_local(async move {
@@ -217,6 +220,33 @@ impl App {
         opening(self.status.borrow().vault, self.pending_opens.get(), self.loaded.get())
     }
 
+    /// Whether a sign-out from this app is under way. The daemon reports the
+    /// vault locked before the CLI has signed out, so views show the wait
+    /// instead of an unlock form.
+    pub fn signing_out(&self) -> bool {
+        self.signing_out.get()
+    }
+
+    /// Signs out, and shows that it is under way until the CLI answers.
+    pub async fn sign_out(self: &Rc<Self>) -> Result<(), IpcError> {
+        if self.signing_out.replace(true) {
+            return Ok(());
+        }
+        self.refresh_views();
+        let result = self.request(Request::Logout).await;
+        self.signing_out.set(false);
+        match result {
+            Ok(Response::Status { status }) => {
+                self.set_status(status);
+                Ok(())
+            }
+            other => {
+                self.refresh_views();
+                other.map(drop)
+            }
+        }
+    }
+
     /// Marks an unlock or sign-in this app started, until the guard drops.
     pub fn begin_opening(self: &Rc<Self>) -> Opening {
         self.pending_opens.set(self.pending_opens.get() + 1);
@@ -231,10 +261,12 @@ impl App {
         self.update_actions();
     }
 
-    /// Settings can sign out or change the CLI, which would stop an open.
+    /// Settings can sign out or change the CLI, which would stop an open or
+    /// a sign-out.
     fn update_actions(&self) {
+        let busy = self.opening() || self.signing_out.get();
         if let Some(settings) = self.gtk.lookup_action("settings").and_downcast::<gio::SimpleAction>() {
-            settings.set_enabled(!self.opening());
+            settings.set_enabled(!busy);
         }
     }
 

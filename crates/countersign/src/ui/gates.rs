@@ -153,7 +153,7 @@ impl Unlock {
         unlock.button.connect_clicked(move |_| submit());
         {
             let app = app.clone();
-            unlock.sign_out.connect_clicked(move |button| confirm_sign_out(&app, button.upcast_ref()));
+            unlock.sign_out.connect_clicked(move |button| confirm_sign_out(&app, button.upcast_ref(), None));
         }
         {
             // Start the CLI while the password is typed. An open already
@@ -205,7 +205,9 @@ pub fn server_name(url: Option<&str>) -> String {
     }
 }
 
-pub fn confirm_sign_out(app: &Rc<App>, parent: &gtk::Widget) {
+/// Asks before signing out, then signs out. `closing`, such as Settings,
+/// closes once the user confirms, so the window shows the sign-out.
+pub fn confirm_sign_out(app: &Rc<App>, parent: &gtk::Widget, closing: Option<adw::Dialog>) {
     let dialog = adw::AlertDialog::builder()
         .heading("Sign out?")
         .body("Countersign will forget this account on this computer. Your vault stays safe on the server.")
@@ -216,9 +218,18 @@ pub fn confirm_sign_out(app: &Rc<App>, parent: &gtk::Widget) {
     dialog.set_response_appearance("sign-out", adw::ResponseAppearance::Destructive);
     let app = app.clone();
     dialog.connect_response(None, move |_, response| {
-        if response == "sign-out" {
-            app.fire(Request::Logout);
+        if response != "sign-out" {
+            return;
         }
+        if let Some(closing) = &closing {
+            closing.close();
+        }
+        let app = app.clone();
+        glib::spawn_future_local(async move {
+            if let Err(e) = app.sign_out().await {
+                crate::ui::window::toast(&format!("Countersign couldn't sign out: {}", e.message));
+            }
+        });
     });
     dialog.present(Some(parent));
 }
