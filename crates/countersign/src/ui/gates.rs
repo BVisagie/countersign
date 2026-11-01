@@ -10,7 +10,6 @@ use gtk::glib;
 
 use super::label;
 use crate::app::App;
-use crate::terminal::Login;
 
 fn gate_box() -> gtk::Box {
     let column = gtk::Box::new(gtk::Orientation::Vertical, 12);
@@ -237,7 +236,6 @@ pub struct SignIn {
     error: gtk::Label,
     progress_spinner: adw::Spinner,
     progress_text: gtk::Label,
-    waiting: gtk::Box,
     /// A sign-in the user started is running, or its terminal is open.
     busy: Cell<bool>,
     /// The CLI is being pointed at the chosen cloud.
@@ -290,14 +288,6 @@ impl SignIn {
         progress_text.set_wrap(true);
         progress.append(&progress_spinner);
         progress.append(&progress_text);
-        let waiting = gtk::Box::new(gtk::Orientation::Vertical, 8);
-        waiting.set_visible(false);
-        let waiting_text =
-            label("Finish signing in in the terminal window, then come back here.", &["cs-gate-body"]);
-        waiting_text.set_wrap(true);
-        let done = busy_button("I've signed in", &["pill"]);
-        waiting.append(&waiting_text);
-        waiting.append(&done);
 
         column.append(&title);
         column.append(&body);
@@ -307,7 +297,6 @@ impl SignIn {
         column.append(&api_key);
         column.append(&progress);
         column.append(&error);
-        column.append(&waiting);
         let sign_in = Rc::new(SignIn {
             root: wrap(&column),
             server,
@@ -317,7 +306,6 @@ impl SignIn {
             error,
             progress_spinner,
             progress_text,
-            waiting,
             busy: Cell::new(false),
             switching: Cell::new(false),
             switch_again: Cell::new(false),
@@ -357,10 +345,10 @@ impl SignIn {
                         me.show_progress(Some("Starting the Bitwarden CLI…"), false);
                         match app.request(Request::LoginTerminal).await {
                             Ok(Response::Terminal { launch }) => {
-                                match crate::terminal::login(&app, button.upcast_ref(), launch).await {
-                                    Ok(Login::Closed) => {}
-                                    Ok(Login::External) => me.waiting.set_visible(true),
-                                    Err(message) => me.show_error(&message),
+                                if let Err(message) =
+                                    crate::terminal::login(&app, button.upcast_ref(), launch).await
+                                {
+                                    me.show_error(&message);
                                 }
                             }
                             Ok(_) => {}
@@ -368,30 +356,6 @@ impl SignIn {
                         }
                     }
                     me.end(&button);
-                });
-            });
-        }
-        {
-            let (app, me) = (app.clone(), Rc::downgrade(&sign_in));
-            done.connect_clicked(move |button| {
-                let Some(me) = me.upgrade() else { return };
-                me.error.set_visible(false);
-                button.set_sensitive(false);
-                set_button_busy(button, true);
-                let (app, button) = (app.clone(), button.clone());
-                glib::spawn_future_local(async move {
-                    let result = app.request(Request::LoginFinished { session: None }).await;
-                    set_button_busy(&button, false);
-                    button.set_sensitive(true);
-                    me.waiting.set_visible(false);
-                    match result {
-                        Ok(Response::Status { status }) if status.vault == VaultState::LoggedOut => {
-                            me.show_error("You're not signed in yet. Sign in with email to try again.")
-                        }
-                        Ok(_) => {}
-                        Err(e) => me.show_error(&e.message),
-                    }
-                    me.update();
                 });
             });
         }
@@ -420,7 +384,7 @@ impl SignIn {
     /// Makes the controls match what is running. The cloud can still be
     /// changed during a switch; the latest choice wins.
     fn update(&self) {
-        let open = !self.busy.get() && !self.waiting.is_visible();
+        let open = !self.busy.get();
         let ready = open && !self.switching.get();
         self.server.set_sensitive(open);
         self.custom.set_sensitive(ready);
@@ -430,7 +394,7 @@ impl SignIn {
 
     /// Starts a sign-in from `button`, unless something is already running.
     fn begin(&self, button: &gtk::Button, text: &str) -> bool {
-        if self.busy.get() || self.switching.get() || self.waiting.is_visible() {
+        if self.busy.get() || self.switching.get() {
             return false;
         }
         self.busy.set(true);
@@ -525,7 +489,7 @@ impl SignIn {
             }
         };
         // Leave the user's choice alone while it is being applied.
-        if self.waiting.is_visible() || self.busy.get() || self.switching.get() {
+        if self.busy.get() || self.switching.get() {
             return;
         }
         self.from_status.set(true);

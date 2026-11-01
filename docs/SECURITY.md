@@ -17,6 +17,12 @@ server protocol. Those stay in the official CLI.
 
 ## How secrets move
 
+- **Signing in with email.** `bw login` runs in a terminal inside the app,
+  so your email, master password and two-step codes go to the official
+  CLI's own prompts. Countersign's code does not read your typing, and
+  clears its copy of anything you paste. The CLI prints its session key in
+  the terminal; the app reads it, sends it to the daemon over the private
+  socket, and wipes the terminal.
 - **Master password.** Typed into GTK's password entry, which keeps its text
   out of swap. It is copied once to send it to the daemon over the private
   socket, then to the CLI in an HTTP body over the socket pair, and cleared

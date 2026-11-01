@@ -34,8 +34,7 @@ M0–M3 reached `main` on 1 November 2026 (#5).
 Known follow-ups, not yet scheduled:
 
 - **Manual testing on a Premium account:** verification codes and the code
-  after the password, attachments, and file Sends. Also in-app sign-in with
-  `vte4`, which the development machine does not have.
+  after the password, attachments, and file Sends.
 - **Installing a newer pinned CLI.** When a Countersign update raises the
   pinned release, Countersign keeps using the copy it installed before, and
   offers no way to install the new one. Settings should offer it.

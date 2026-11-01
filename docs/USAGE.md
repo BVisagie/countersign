@@ -8,11 +8,10 @@
 2. **Sign in.** Choose your server: **US cloud**, **EU cloud** or
    **Self-hosted** (enter its address). Then either:
    - **Sign in with email.** The official CLI asks for your email, master
-     password and two-step code. With `vte4` installed this happens inside
-     Countersign, and the vault opens without typing the password again.
-     You can paste your password there with **Ctrl+V** or the paste
-     button; a paste never presses Enter for you. Without `vte4`, a
-     terminal window opens; finish there, then choose **I've signed in**.
+     password and two-step code, in a terminal inside Countersign. When it
+     succeeds, the vault opens without typing the password again. You can
+     paste your password there with **Ctrl+V** or the paste button; a
+     paste never presses Enter for you.
    - **Use an API key.** Enter the personal API key from the Bitwarden web
      vault (**Settings → Security → Keys**). You still unlock with your
      master password.

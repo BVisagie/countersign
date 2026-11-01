@@ -1,44 +1,28 @@
-//! Runs the official `bw login` so its own prompts handle the email, master
-//! password, two-step and new-device codes.
+//! Runs the official `bw login` in a terminal inside the app, so its own
+//! prompts handle the email, master password, two-step and new-device codes.
+//! When it succeeds, the session key `bw login --raw` prints is handed to the
+//! daemon so the vault opens without typing the password twice; the terminal
+//! is then wiped.
 //!
-//! With the `terminal` feature the CLI runs in an embedded terminal. When it
-//! succeeds, the session key `bw login --raw` prints is handed to the daemon
-//! so the vault opens without typing the password twice; the terminal is
-//! then wiped. Without the feature, your own terminal runs `bw login`.
-//!
-//! The embedded terminal pastes the clipboard with the keys a text field
-//! uses, and from a button, one line at a time: a paste never presses Enter
-//! or answers a later prompt.
+//! The terminal pastes the clipboard with the keys a text field uses, and
+//! from a button, one line at a time: a paste never presses Enter or answers
+//! a later prompt.
 
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use countersign_ipc::TerminalLaunch;
+use adw::prelude::*;
+use countersign_ipc::{Request, Response, Secret, TerminalLaunch, VaultState};
+use gtk::glib;
+use vte4::prelude::*;
 
 use crate::app::App;
-
-/// How a sign-in ended. Each build uses one of these.
-pub enum Login {
-    /// The embedded terminal closed.
-    #[cfg_attr(not(feature = "terminal"), expect(dead_code))]
-    Closed,
-    /// The user's own terminal runs `bw login`; they say when it is done.
-    #[cfg_attr(feature = "terminal", expect(dead_code))]
-    External,
-}
 
 /// Runs `bw login` in a dialog over `parent` and returns once the dialog
 /// closes. Until the CLI draws its first prompt, the dialog says so instead
 /// of showing an empty terminal. Once it succeeds, the dialog closes and the
 /// window shows the vault opening.
-#[cfg(feature = "terminal")]
-pub async fn login(app: &Rc<App>, parent: &gtk::Widget, launch: TerminalLaunch) -> Result<Login, String> {
-    use std::cell::{Cell, RefCell};
-
-    use adw::prelude::*;
-    use countersign_ipc::{Request, Response, Secret, VaultState};
-    use gtk::glib;
-    use vte4::prelude::*;
-
+pub async fn login(app: &Rc<App>, parent: &gtk::Widget, launch: TerminalLaunch) -> Result<(), String> {
     let terminal = vte4::Terminal::new();
     terminal.set_vexpand(true);
     terminal.set_hexpand(true);
@@ -241,13 +225,12 @@ pub async fn login(app: &Rc<App>, parent: &gtk::Widget, launch: TerminalLaunch) 
     let _ = closed.recv().await;
     match failure.take() {
         Some(message) => Err(message),
-        None => Ok(Login::Closed),
+        None => Ok(()),
     }
 }
 
 /// The clipboard's first line of text, without line breaks, and whether
 /// more text followed. VTE would send each line break as Enter.
-#[cfg(feature = "terminal")]
 fn first_line(text: &str) -> (&str, bool) {
     let text = text.trim_start_matches(['\r', '\n']);
     match text.find(['\r', '\n']) {
@@ -257,11 +240,7 @@ fn first_line(text: &str) -> (&str, bool) {
 }
 
 /// Shows `message` under the dialog's title for a few seconds.
-#[cfg(feature = "terminal")]
 fn flash(title: &adw::WindowTitle, message: &str) {
-    use adw::prelude::*;
-    use gtk::glib;
-
     title.set_subtitle(message);
     let (title, message) = (title.downgrade(), message.to_owned());
     glib::timeout_add_local_once(std::time::Duration::from_secs(3), move || {
@@ -276,34 +255,16 @@ fn flash(title: &adw::WindowTitle, message: &str) {
 
 /// Ends the sign-in CLI, which has not been reaped yet, so the pid is still
 /// its own.
-#[cfg(feature = "terminal")]
-fn hang_up(pid: gtk::glib::Pid) {
+fn hang_up(pid: glib::Pid) {
     // SAFETY: kill has no memory effects.
     unsafe { libc::kill(pid.0, libc::SIGHUP) };
 }
 
 /// VTE's flag for spawning without the parent environment
 /// (`VTE_SPAWN_NO_PARENT_ENVV`), which glib's flags do not name.
-#[cfg(feature = "terminal")]
 const VTE_SPAWN_NO_PARENT_ENVV: u32 = 1 << 25;
 
-#[cfg(not(feature = "terminal"))]
-pub async fn login(_app: &Rc<App>, _parent: &gtk::Widget, launch: TerminalLaunch) -> Result<Login, String> {
-    // Plain `bw login`: its session key would otherwise stay on screen.
-    let mut command = std::process::Command::new("xdg-terminal-exec");
-    // `env -i` gives the CLI only the daemon's scrubbed environment.
-    command.arg("env").arg("-i");
-    for (k, v) in &launch.env {
-        command.arg(format!("{k}={v}"));
-    }
-    command.arg(&launch.program).arg("login");
-    match command.spawn() {
-        Ok(_) => Ok(Login::External),
-        Err(e) => Err(format!("Cannot open a terminal: {e}")),
-    }
-}
-
-#[cfg(all(test, feature = "terminal"))]
+#[cfg(test)]
 mod tests {
     use super::first_line;
 
