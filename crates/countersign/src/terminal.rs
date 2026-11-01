@@ -84,7 +84,10 @@ pub async fn login(app: &Rc<App>, parent: &gtk::Widget, launch: TerminalLaunch) 
     {
         let (notice, exited) = (notice.clone(), exited.clone());
         terminal.connect_contents_changed(move |terminal| {
-            if notice.is_visible() && !exited.get() {
+            // The CLI sends control sequences before its first prompt, and
+            // VTE reports those as changes too: wait for visible text.
+            let drawn = || terminal.text_format(vte4::Format::Text).is_some_and(|t| !t.trim().is_empty());
+            if notice.is_visible() && !exited.get() && drawn() {
                 notice.set_visible(false);
                 terminal.set_opacity(1.0);
                 terminal.grab_focus();
