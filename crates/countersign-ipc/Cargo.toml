@@ -1,0 +1,17 @@
+[package]
+name = "countersign-ipc"
+description = "Messages and vault models shared by the Countersign daemon and app"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+zeroize.workspace = true
+
+[lints]
+workspace = true

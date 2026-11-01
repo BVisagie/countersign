@@ -1,0 +1,164 @@
+/* Countersign's components. Omarchy themes override the variables in
+   :root; without one these fall back to libadwaita's colors. */
+
+:root {
+  --cs-radius: 10px;
+  --cs-radius-small: 6px;
+  --cs-bg-darker: var(--headerbar-bg-color);
+  --cs-bg-lighter: var(--popover-bg-color);
+  --cs-dim: color-mix(in srgb, var(--window-fg-color) 78%, transparent);
+  --cs-muted: color-mix(in srgb, var(--window-fg-color) 55%, transparent);
+  --cs-line: color-mix(in srgb, var(--window-fg-color) 12%, transparent);
+  --cs-line-strong: color-mix(in srgb, var(--window-fg-color) 28%, transparent);
+  --cs-hover: color-mix(in srgb, var(--window-fg-color) 7%, transparent);
+  --cs-selection: color-mix(in srgb, var(--accent-bg-color) 32%, transparent);
+  --cs-selection-fg: var(--window-fg-color);
+  --cs-focus: var(--accent-color);
+  --cs-frame: var(--accent-bg-color);
+}
+
+.cs-tone-0 { background-color: color-mix(in srgb, var(--blue-3) 24%, transparent); color: var(--blue-2); }
+.cs-tone-1 { background-color: color-mix(in srgb, var(--green-3) 24%, transparent); color: var(--green-2); }
+.cs-tone-2 { background-color: color-mix(in srgb, var(--purple-3) 24%, transparent); color: var(--purple-2); }
+.cs-tone-3 { background-color: color-mix(in srgb, var(--orange-3) 24%, transparent); color: var(--orange-2); }
+.cs-tone-4 { background-color: color-mix(in srgb, var(--yellow-3) 24%, transparent); color: var(--yellow-2); }
+.cs-tone-5 { background-color: color-mix(in srgb, var(--red-3) 24%, transparent); color: var(--red-2); }
+
+/* Shapes follow Hyprland's rounding under Omarchy. */
+button, entry, spinbutton, dropdown > button, popover > contents, .card, list.boxed-list,
+.cs-search, .cs-key, .cs-chip {
+  border-radius: var(--cs-radius-small);
+}
+window.csd, window.csd > .cs-root { border-radius: var(--window-radius); }
+
+*:focus-visible { outline-color: var(--cs-focus); }
+
+/* ---------- Sidebar ---------- */
+
+.cs-sidebar { background-color: var(--sidebar-bg-color); }
+.cs-brand { font-weight: 800; letter-spacing: 0.18em; font-size: 0.82em; color: var(--cs-dim); }
+.cs-section-title {
+  font-size: 0.72em; font-weight: 700; letter-spacing: 0.14em; color: var(--cs-muted);
+  margin: 14px 12px 4px 12px;
+}
+list.cs-nav { background: transparent; }
+list.cs-nav > row {
+  padding: 5px 10px; margin: 1px 6px; border-radius: var(--cs-radius-small);
+  min-height: 30px;
+}
+list.cs-nav > row:hover { background-color: var(--cs-hover); }
+list.cs-nav > row:selected { background-color: var(--cs-selection); color: var(--cs-selection-fg); }
+list.cs-nav > row:selected .cs-count { color: var(--cs-selection-fg); }
+.cs-nav-icon { color: var(--cs-dim); }
+.cs-count { font-size: 0.82em; color: var(--cs-muted); font-feature-settings: "tnum"; }
+
+.cs-account { padding: 10px 12px; border-top: 1px solid var(--cs-line); }
+.cs-account-email { font-size: 0.86em; }
+.cs-account-server { font-size: 0.76em; color: var(--cs-muted); }
+.cs-dot { min-width: 8px; min-height: 8px; border-radius: 99px; background-color: var(--success-color); }
+.cs-dot.locked { background-color: var(--warning-color); }
+.cs-dot.syncing { background-color: var(--accent-color); }
+
+/* ---------- Item list ---------- */
+
+.cs-search {
+  min-height: 34px; padding: 0 10px; background-color: var(--cs-hover);
+  border: 1px solid transparent; box-shadow: none;
+}
+.cs-search:focus-within { border-color: var(--cs-focus); background-color: var(--view-bg-color); }
+
+listview.cs-items, list.cs-items { background: transparent; }
+listview.cs-items > row {
+  padding: 6px 10px; margin: 1px 6px; border-radius: var(--cs-radius-small);
+}
+listview.cs-items > row:hover { background-color: var(--cs-hover); }
+listview.cs-items > row:selected { background-color: var(--cs-selection); color: var(--cs-selection-fg); }
+listview.cs-items > row:selected .cs-item-subtitle { color: var(--cs-selection-fg); opacity: 0.8; }
+
+.cs-monogram {
+  min-width: 32px; min-height: 32px; border-radius: var(--cs-radius-small);
+  font-weight: 800; font-size: 0.95em;
+}
+.cs-monogram.large { min-width: 52px; min-height: 52px; font-size: 1.45em; }
+.cs-item-name { font-weight: 600; }
+.cs-item-subtitle { font-size: 0.86em; color: var(--cs-muted); }
+.cs-badge { color: var(--cs-muted); }
+.cs-badge.favorite { color: var(--warning-color); }
+.cs-list-meta { font-size: 0.78em; color: var(--cs-muted); margin: 2px 16px 6px 16px; }
+
+/* ---------- Detail ---------- */
+
+.cs-detail { padding: 22px 26px 32px 26px; }
+.cs-detail-title { font-size: 1.45em; font-weight: 800; }
+.cs-detail-subtitle { color: var(--cs-muted); }
+.cs-chip {
+  font-size: 0.76em; padding: 2px 8px; background-color: var(--cs-hover);
+  color: var(--cs-dim);
+}
+.cs-fields {
+  border: 1px solid var(--cs-line); border-radius: var(--cs-radius-small);
+  background-color: var(--card-bg-color);
+}
+.cs-field { padding: 9px 12px; border-bottom: 1px solid var(--cs-line); }
+.cs-field:last-child { border-bottom: none; }
+.cs-field-label {
+  font-size: 0.72em; font-weight: 700; letter-spacing: 0.1em; color: var(--cs-muted);
+}
+.cs-field-value { font-size: 1em; }
+.cs-field-value.secret { letter-spacing: 0.12em; }
+.cs-field-value.code { font-size: 1.35em; font-weight: 700; letter-spacing: 0.08em; color: var(--accent-color); }
+.cs-field button.flat { min-width: 28px; min-height: 28px; padding: 0; color: var(--cs-dim); }
+.cs-field button.flat:hover { color: var(--window-fg-color); background-color: var(--cs-hover); }
+.cs-group-title {
+  font-size: 0.72em; font-weight: 700; letter-spacing: 0.14em; color: var(--cs-muted);
+  margin: 18px 2px 6px 2px;
+}
+.cs-notes { padding: 10px 12px; }
+.cs-meta { font-size: 0.78em; color: var(--cs-muted); }
+.cs-totp-ring { color: var(--accent-color); }
+
+.cs-empty-title { font-size: 1.1em; font-weight: 700; }
+.cs-empty-body { color: var(--cs-muted); }
+
+/* ---------- Unlock and sign-in ---------- */
+
+.cs-gate { padding: 32px; }
+.cs-gate-mark { font-size: 2.2em; font-weight: 800; letter-spacing: 0.3em; color: var(--cs-dim); }
+.cs-gate-title { font-size: 1.25em; font-weight: 800; }
+.cs-gate-body { color: var(--cs-muted); }
+.cs-gate entry, .cs-gate passwordentry { min-height: 38px; }
+.cs-error { color: var(--error-color); font-size: 0.9em; }
+
+/* ---------- Quick access ---------- */
+
+window.cs-quick-window { background: transparent; }
+.cs-quick {
+  background-color: var(--window-bg-color);
+  border: 1px solid var(--cs-frame);
+  border-radius: var(--cs-radius);
+  box-shadow: 0 18px 48px var(--shade-color, rgba(0,0,0,0.4));
+}
+.cs-quick-search {
+  min-height: 46px; padding: 0 14px; font-size: 1.12em;
+  background: transparent; border: none; box-shadow: none; border-radius: 0;
+  border-bottom: 1px solid var(--cs-line);
+}
+.cs-quick listview.cs-items > row { margin: 1px 6px; padding: 7px 10px; }
+.cs-quick-hint { font-size: 0.8em; color: var(--cs-muted); }
+.cs-quick-action { font-size: 0.8em; color: var(--cs-selection-fg); opacity: 0.85; }
+.cs-quick-footer { padding: 7px 12px; border-top: 1px solid var(--cs-line); background-color: var(--cs-bg-darker); }
+.cs-key {
+  font-size: 0.74em; padding: 0 5px; min-height: 18px;
+  border: 1px solid var(--cs-line-strong); color: var(--cs-dim);
+}
+.cs-quick-locked { padding: 18px; }
+
+/* ---------- Receipts ---------- */
+
+.cs-receipt {
+  padding: 8px 12px; border-top: 1px solid var(--cs-line); background-color: var(--cs-bg-darker);
+}
+.cs-receipt-title { font-weight: 600; font-size: 0.92em; }
+.cs-receipt-detail { font-size: 0.8em; color: var(--cs-muted); }
+.cs-receipt progressbar trough { min-height: 2px; background-color: var(--cs-line); }
+.cs-receipt progressbar progress { min-height: 2px; background-color: var(--accent-color); }
