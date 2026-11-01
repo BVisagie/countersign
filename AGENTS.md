@@ -20,8 +20,8 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 ```
 
-Without the `vte4` library installed, add `--no-default-features` to the
-clippy and test commands; the `terminal` feature needs it.
+The build links system libraries, `vte4` among them;
+[docs/INSTALL.md](docs/INSTALL.md#requirements) lists the packages.
 
 ## Rules that are easy to break
 
