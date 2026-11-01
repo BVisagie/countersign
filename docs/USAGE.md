@@ -18,8 +18,9 @@
 3. **Unlock** with your master password.
 
 Your session lives in Countersign's background service, `countersignd`,
-which the app starts when needed. The app itself only ever holds what it
-shows you.
+which the app starts when needed. The app receives a secret only when it
+needs one: when you reveal a field, generate a password, or edit an item or
+a Send, which loads the whole item into the editor.
 
 ## Quick access
 
@@ -69,8 +70,9 @@ shows its password history and attachments.
 
 ## Copying
 
-- Copying happens in the background service. The value never passes
-  through the app.
+- Copying from your vault happens in the background service; the value
+  never passes through the app. Generated passwords are the exception: the
+  app already holds them and hands them to the service to copy.
 - A copy clears itself after 30 seconds, unless something else has replaced
   it on the clipboard by then.
 - Copies are marked so clipboard history, including Omarchy's, skips them.
