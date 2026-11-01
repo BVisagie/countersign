@@ -555,12 +555,15 @@ impl SignIn {
     }
 }
 
-/// Shown when the official CLI is missing, too old or failing.
+/// Shown when the official CLI is missing, too old or failing. While the
+/// CLI installs, nothing here can start another change to the CLI.
 pub struct Setup {
     pub root: gtk::Widget,
     title: gtk::Label,
     body: gtk::Label,
     install: gtk::Button,
+    choose: gtk::Button,
+    retry: gtk::Button,
 }
 
 impl Setup {
@@ -582,56 +585,68 @@ impl Setup {
         let choose =
             gtk::Button::builder().label("Use a CLI on this computer…").css_classes(["flat"]).build();
         let retry = busy_button("Check again", &["flat"]);
+        // On the page, not in a toast: an install error is read in full.
+        let error = label("", &["cs-error"]);
+        error.set_visible(false);
+        error.set_wrap(true);
         column.append(&title);
         column.append(&body);
         column.append(&install);
         column.append(&choose);
         column.append(&retry);
+        column.append(&error);
         {
-            let app = app.clone();
+            let (app, error) = (app.clone(), error.clone());
             install.connect_clicked(move |button| {
                 button.set_sensitive(false);
-                let (app, button) = (app.clone(), button.clone());
+                error.set_visible(false);
+                let (app, button, error) = (app.clone(), button.clone(), error.clone());
                 glib::spawn_future_local(async move {
                     if let Err(e) = app.request(Request::InstallCli).await {
-                        crate::ui::window::toast(&e.message);
+                        error.set_label(&e.message);
+                        error.set_visible(true);
                     }
-                    button.set_sensitive(true);
+                    button.set_sensitive(!installing(&app));
                 });
             });
         }
         {
-            let app = app.clone();
+            let (app, error) = (app.clone(), error.clone());
             retry.connect_clicked(move |button| {
                 button.set_sensitive(false);
+                error.set_visible(false);
                 set_button_busy(button, true);
                 let (app, button) = (app.clone(), button.clone());
                 glib::spawn_future_local(async move {
                     let _ = app.request(Request::Refresh).await;
                     set_button_busy(&button, false);
-                    button.set_sensitive(true);
+                    button.set_sensitive(!installing(&app));
                 });
             });
         }
         {
-            let app = app.clone();
+            let (app, error) = (app.clone(), error.clone());
             choose.connect_clicked(move |button| {
                 let window = button.root().and_downcast::<gtk::Window>();
                 let dialog = gtk::FileDialog::builder().title("Choose the Bitwarden CLI").build();
-                let app = app.clone();
+                let (app, error) = (app.clone(), error.clone());
                 glib::spawn_future_local(async move {
                     let Ok(file) = dialog.open_future(window.as_ref()).await else { return };
                     let Some(path) = file.path() else { return };
                     let settings = Settings { cli_path: Some(path), ..app.settings.borrow().clone() };
+                    error.set_visible(false);
                     match app.request(Request::UpdateSettings { settings }).await {
                         Ok(Response::Settings { settings }) => *app.settings.borrow_mut() = settings,
                         Ok(_) => {}
-                        Err(e) => crate::ui::window::toast(&e.message),
+                        Err(e) => {
+                            error.set_label(&e.message);
+                            error.set_visible(true);
+                        }
                     }
                 });
             });
         }
-        Rc::new(Setup { root: wrap(&column), title, body, install })
+        Rc::new(Setup { root: wrap(&column), title, body, install, choose, retry })
     }
 
     pub fn set_status(&self, status: &Status) {
@@ -652,6 +667,14 @@ impl Setup {
         };
         self.title.set_label(&title);
         self.body.set_label(&body);
-        self.install.set_sensitive(!matches!(status.cli, CliState::Installing));
+        let idle = status.cli != CliState::Installing;
+        for button in [&self.install, &self.choose, &self.retry] {
+            button.set_sensitive(idle);
+        }
     }
+}
+
+/// Whether the daemon is installing the CLI.
+fn installing(app: &App) -> bool {
+    app.status.borrow().cli == CliState::Installing
 }

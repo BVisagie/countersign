@@ -125,7 +125,7 @@ async fn download(url: &str, path: &Path) -> Result<String, IpcError> {
         .send()
         .await
         .and_then(reqwest::Response::error_for_status)
-        .map_err(|e| failed(format!("Cannot download the Bitwarden CLI: {e}")))?;
+        .map_err(|e| download_failed(&e))?;
     if response.content_length().is_some_and(|n| n > ARCHIVE_LIMIT) {
         return Err(failed("The CLI download is larger than expected."));
     }
@@ -139,7 +139,7 @@ async fn download(url: &str, path: &Path) -> Result<String, IpcError> {
     let mut total = 0u64;
     let mut body = response.bytes_stream();
     while let Some(chunk) = body.next().await {
-        let chunk = chunk.map_err(|e| failed(format!("The CLI download was interrupted: {e}")))?;
+        let chunk = chunk.map_err(|e| download_failed(&e))?;
         total += chunk.len() as u64;
         if total > ARCHIVE_LIMIT {
             return Err(failed("The CLI download is larger than expected."));
@@ -149,6 +149,31 @@ async fn download(url: &str, path: &Path) -> Result<String, IpcError> {
     }
     file.sync_all().map_err(|e| failed(e.to_string()))?;
     Ok(hex::encode(hasher.finalize()))
+}
+
+/// Why a download failed, in words. reqwest's own message is mostly the
+/// URL, and the app shows this one, so the full error goes to the log.
+fn download_failed(e: &reqwest::Error) -> IpcError {
+    let mut cause = e.to_string();
+    let mut source = std::error::Error::source(e);
+    while let Some(next) = source {
+        cause.push_str(": ");
+        cause.push_str(&next.to_string());
+        source = next.source();
+    }
+    tracing::warn!("downloading the Bitwarden CLI: {cause}");
+    failed(match e.status() {
+        Some(status) => {
+            format!("The Bitwarden CLI download failed: GitHub answered {status}. Try again later.")
+        }
+        None if e.is_timeout() => {
+            "The Bitwarden CLI download timed out. Check your internet connection and try again.".to_owned()
+        }
+        None => {
+            "Countersign couldn't download the Bitwarden CLI. Check your internet connection and try again."
+                .to_owned()
+        }
+    })
 }
 
 /// Extracts only the `bw` executable, with a size limit.

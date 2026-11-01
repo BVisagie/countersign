@@ -5,8 +5,8 @@ use std::rc::{Rc, Weak};
 use std::time::Duration;
 
 use countersign_ipc::{
-    ClipboardEvent, ClipboardState, ErrorCode, Event, Field, IpcError, PROTOCOL_VERSION, Request, Response,
-    Secret, Settings, Status, VaultSnapshot, VaultState,
+    CliState, ClipboardEvent, ClipboardState, ErrorCode, Event, Field, IpcError, PROTOCOL_VERSION, Request,
+    Response, Secret, Settings, Status, VaultSnapshot, VaultState,
 };
 use gtk::prelude::*;
 use gtk::{gio, glib};
@@ -261,10 +261,11 @@ impl App {
         self.update_actions();
     }
 
-    /// Settings can sign out or change the CLI, which would stop an open or
-    /// a sign-out.
+    /// Settings can sign out or change the CLI, which would stop an open,
+    /// a sign-out or an install.
     fn update_actions(&self) {
-        let busy = self.opening() || self.signing_out.get();
+        let busy =
+            self.opening() || self.signing_out.get() || self.status.borrow().cli == CliState::Installing;
         if let Some(settings) = self.gtk.lookup_action("settings").and_downcast::<gio::SimpleAction>() {
             settings.set_enabled(!busy);
         }
