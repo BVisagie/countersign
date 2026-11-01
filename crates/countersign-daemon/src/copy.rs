@@ -54,7 +54,7 @@ impl Daemon {
                 settings.totp_follow_up_secs,
             );
         }
-        self.emit_clipboard(ClipboardEvent {
+        self.announce(ClipboardEvent {
             state: ClipboardState::Copied,
             label: format!("{} copied", field.label()),
             item_name: Some(name),
@@ -76,7 +76,7 @@ impl Daemon {
         self.copy_timers.lock().expect("timers").cancel();
         let generation = self.put(value, epoch, None, settings.clipboard_clear_secs).await?;
         self.schedule_clear(generation, settings.clipboard_clear_secs);
-        self.emit_clipboard(ClipboardEvent {
+        self.announce(ClipboardEvent {
             state: ClipboardState::Copied,
             label: format!("{label} copied"),
             item_name: None,
@@ -121,7 +121,10 @@ impl Daemon {
                 .await
                 .unwrap_or(Clear::Failed);
             // A copy started since then speaks for itself; an aborted timer
-            // that was already running must not end its notification.
+            // that was already running must not end its notification. The
+            // lock orders this check and report against copies announcing
+            // themselves.
+            let _order = me.clipboard_events.lock().expect("clipboard events");
             if me.clipboard.newest() != generation {
                 return;
             }
@@ -178,7 +181,7 @@ impl Daemon {
             match me.put(code, epoch, Some(generation), clear_secs).await {
                 Ok(next) => {
                     me.schedule_clear(next, clear_secs);
-                    me.emit_clipboard(ClipboardEvent {
+                    me.announce(ClipboardEvent {
                         state: ClipboardState::FollowUpCopied,
                         label: "Verification code copied".into(),
                         item_name: Some(name),
@@ -200,6 +203,12 @@ impl Daemon {
         if let Some(task) = self.copy_timers.lock().expect("timers").follow_up.take() {
             task.abort();
         }
+    }
+
+    /// Announces a copy, ordered against expiry reports.
+    fn announce(&self, clipboard: ClipboardEvent) {
+        let _order = self.clipboard_events.lock().expect("clipboard events");
+        self.emit(Event::Clipboard { clipboard });
     }
 
     fn emit_clipboard(&self, clipboard: ClipboardEvent) {

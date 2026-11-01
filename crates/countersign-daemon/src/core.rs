@@ -77,6 +77,9 @@ pub struct Daemon {
     vault: Mutex<Arc<VaultSnapshot>>,
     pub(crate) clipboard: Arc<Clipboard>,
     pub(crate) copy_timers: Mutex<CopyTimers>,
+    /// Orders clipboard events: a copy announces itself, and a timer checks
+    /// that no newer copy started before reporting, under this lock.
+    pub(crate) clipboard_events: Mutex<()>,
     activity: Mutex<Instant>,
     grants: Mutex<HashMap<String, Instant>>,
     recent: Mutex<VecDeque<String>>,
@@ -109,6 +112,7 @@ impl Daemon {
             vault: Mutex::new(Arc::new(VaultSnapshot::default())),
             clipboard: Arc::new(Clipboard::default()),
             copy_timers: Mutex::new(CopyTimers::default()),
+            clipboard_events: Mutex::new(()),
             activity: Mutex::new(Instant::now()),
             grants: Mutex::new(HashMap::new()),
             recent: Mutex::new(VecDeque::new()),
