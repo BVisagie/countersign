@@ -36,6 +36,17 @@ struct Owned {
     alive: Arc<AtomicBool>,
 }
 
+/// What clearing found.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Clear {
+    /// Our value was on the clipboard and is gone now.
+    Cleared,
+    /// The clipboard held something else: another app replaced our value.
+    NotOurs,
+    /// Our value is still there; clearing it failed.
+    Failed,
+}
+
 /// Returned when a copy's guard refuses it, for example after a lock.
 #[derive(Debug, thiserror::Error)]
 #[error("the copy was cancelled")]
@@ -149,26 +160,31 @@ impl Clipboard {
     /// Clears the clipboard if the compositor holds Countersign's value from
     /// `generation`, or our registered value when `generation` is `None`.
     /// Never clears another application's value. Blocking.
-    pub fn clear_if_ours(&self, generation: Option<u64>) -> bool {
+    pub fn clear_if_ours(&self, generation: Option<u64>) -> Clear {
         let mut current = self.current.lock().expect("clipboard state");
         let Some(target) = generation.or_else(|| current.as_ref().map(|o| o.generation)) else {
-            return false;
+            return Clear::NotOurs;
         };
         let registered = current.as_ref().is_some_and(|o| o.generation == target);
         if published() != Some(target) {
             if registered {
                 *current = None;
             }
-            return false;
+            return Clear::NotOurs;
         }
         if let Err(e) = copy::clear(ClipboardType::Regular, Seat::All) {
             tracing::warn!("clearing the clipboard failed: {e}");
-            return false;
+            return Clear::Failed;
         }
         if registered {
             *current = None;
         }
-        true
+        Clear::Cleared
+    }
+
+    /// The generation of the newest copy started, whether or not it finished.
+    pub fn newest(&self) -> u64 {
+        self.generation.load(Ordering::SeqCst)
     }
 }
 
@@ -204,7 +220,7 @@ mod tests {
         assert_eq!(published(), None);
 
         let last = clipboard.copy(value("fifth"), true, ttl, || true, None).unwrap();
-        assert!(clipboard.clear_if_ours(None));
+        assert_eq!(clipboard.clear_if_ours(None), Clear::Cleared);
         assert_eq!(published(), None);
         assert!(!clipboard.is_current(last));
     }

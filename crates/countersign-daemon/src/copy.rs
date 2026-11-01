@@ -14,7 +14,7 @@ use countersign_ipc::{ClipboardEvent, ClipboardState, ErrorCode, Event, Field, I
 use secrecy::ExposeSecret;
 use zeroize::Zeroizing;
 
-use crate::clipboard::Refused;
+use crate::clipboard::{Clear, Refused};
 use crate::core::{Daemon, ipc_error};
 
 impl Daemon {
@@ -117,13 +117,22 @@ impl Daemon {
         let task = tokio::spawn(async move {
             tokio::time::sleep(Duration::from_secs(u64::from(after_secs))).await;
             let clipboard = me.clipboard.clone();
-            let _ = tokio::task::spawn_blocking(move || clipboard.clear_if_ours(Some(generation))).await;
-            // Report the end of this copy even if another app replaced it
-            // first. Only the current copy's timer is alive, so this never
-            // speaks for a newer copy.
+            let outcome = tokio::task::spawn_blocking(move || clipboard.clear_if_ours(Some(generation)))
+                .await
+                .unwrap_or(Clear::Failed);
+            // A copy started since then speaks for itself; an aborted timer
+            // that was already running must not end its notification.
+            if me.clipboard.newest() != generation {
+                return;
+            }
+            let (state, label) = match outcome {
+                // Cleared, or another app replaced it: nothing of ours is left.
+                Clear::Cleared | Clear::NotOurs => (ClipboardState::Cleared, "Clipboard cleared"),
+                Clear::Failed => (ClipboardState::Failed, "Countersign could not clear the clipboard"),
+            };
             me.emit_clipboard(ClipboardEvent {
-                state: ClipboardState::Cleared,
-                label: "Clipboard cleared".into(),
+                state,
+                label: label.into(),
                 item_name: None,
                 clears_in: None,
                 follow_up_in: None,

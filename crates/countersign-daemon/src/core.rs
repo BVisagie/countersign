@@ -494,8 +494,11 @@ impl Daemon {
         let was_unlocked = session.is_some();
         self.copy_timers.lock().expect("timers").cancel();
         let clipboard = self.clipboard.clone();
-        let cleared =
-            tokio::task::spawn_blocking(move || clipboard.clear_if_ours(None)).await.unwrap_or(false);
+        let cleared = tokio::task::spawn_blocking(move || {
+            clipboard.clear_if_ours(None) == crate::clipboard::Clear::Cleared
+        })
+        .await
+        .unwrap_or(false);
         if cleared {
             self.emit(Event::Clipboard {
                 clipboard: ClipboardEvent {
