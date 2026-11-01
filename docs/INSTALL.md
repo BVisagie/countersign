@@ -36,7 +36,7 @@ The script builds Countersign and installs it for your user only:
 | --- | --- |
 | `countersign` (the app) and `countersignd` (its background service) | `~/.local/bin/` |
 | Desktop entry | `~/.local/share/applications/io.github.bvisagie.Countersign.desktop` |
-| Icon | `~/.local/share/icons/hicolor/scalable/apps/io.github.bvisagie.Countersign.svg` |
+| Icons | `~/.local/share/icons/hicolor/scalable/apps/io.github.bvisagie.Countersign.svg` and `~/.local/share/icons/hicolor/symbolic/apps/io.github.bvisagie.Countersign-symbolic.svg` |
 
 Nothing else on your system is changed. `XDG_BIN_HOME` and `XDG_DATA_HOME`
 move these folders if you set them. `~/.local/bin` needs to be on your
@@ -146,6 +146,7 @@ If you use your own CLI, update it as you normally would.
    rm ~/.local/bin/countersign ~/.local/bin/countersignd
    rm ~/.local/share/applications/io.github.bvisagie.Countersign.desktop
    rm ~/.local/share/icons/hicolor/scalable/apps/io.github.bvisagie.Countersign.svg
+   rm ~/.local/share/icons/hicolor/symbolic/apps/io.github.bvisagie.Countersign-symbolic.svg
    rm -r ~/.config/countersign ~/.local/share/countersign
    ```
 

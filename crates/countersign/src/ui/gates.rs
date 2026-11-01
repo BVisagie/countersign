@@ -43,10 +43,21 @@ fn set_button_busy(button: &gtk::Button, busy: bool) {
     }
 }
 
-fn mark() -> gtk::Label {
-    let mark = gtk::Label::new(Some("COUNTERSIGN"));
-    mark.add_css_class("cs-gate-mark");
+/// The sentry on watch above the wordmark, heading every page shown before
+/// the vault opens.
+pub fn mark() -> gtk::Box {
+    let mark = gtk::Box::new(gtk::Orientation::Vertical, 14);
     mark.set_margin_bottom(8);
+    let sentry = gtk::Image::builder()
+        .icon_name(super::SENTRY_ICON)
+        .pixel_size(72)
+        .css_classes(["cs-gate-mascot"])
+        .accessible_role(gtk::AccessibleRole::Presentation)
+        .build();
+    let wordmark = gtk::Label::new(Some("COUNTERSIGN"));
+    wordmark.add_css_class("cs-gate-mark");
+    mark.append(&sentry);
+    mark.append(&wordmark);
     mark
 }
 

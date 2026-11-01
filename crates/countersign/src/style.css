@@ -129,6 +129,7 @@ listview.cs-items > row:selected .cs-item-subtitle { color: var(--cs-selection-f
 /* ---------- Unlock and sign-in ---------- */
 
 .cs-gate { padding: 32px; }
+.cs-gate-mascot { color: var(--cs-dim); }
 .cs-gate-mark { font-size: 2.2em; font-weight: 800; letter-spacing: 0.3em; color: var(--cs-dim); }
 .cs-gate-title { font-size: 1.25em; font-weight: 800; }
 .cs-gate-body { color: var(--cs-muted); }

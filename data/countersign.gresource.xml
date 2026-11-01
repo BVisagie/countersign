@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Built into the app by crates/countersign/build.rs. GTK adds the icons
+     folder under the application's resource path to the icon theme. -->
+<gresources>
+  <gresource prefix="/io/github/bvisagie/Countersign/icons/scalable/apps">
+    <file>io.github.bvisagie.Countersign-symbolic.svg</file>
+    <file>io.github.bvisagie.Countersign-at-ease-symbolic.svg</file>
+  </gresource>
+</gresources>

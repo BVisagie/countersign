@@ -1,7 +1,19 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
-  <rect x="8" y="8" width="112" height="112" rx="10" fill="#1b2633"/>
-  <rect x="8" y="8" width="112" height="112" rx="10" fill="none" stroke="#77baf3" stroke-width="4"/>
-  <path d="M44 58 V46 a20 20 0 0 1 40 0 V58" fill="none" stroke="#eee2cc" stroke-width="9" stroke-linecap="round"/>
-  <rect x="32" y="58" width="64" height="44" rx="6" fill="#eee2cc"/>
-  <path d="M50 80 l10 10 l19 -20" fill="none" stroke="#1b2633" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- Countersign: a meerkat standing sentry, shaped like a keyhole. Its
+       tail underlines it like a second signature. See README.md. -->
+  <rect x="8" y="8" width="112" height="112" rx="24" fill="#1b2633"/>
+  <g transform="translate(64 64) scale(1.1) translate(-65 -70)">
+    <path d="M78 95 C90 98 99 103 93 108 C86 113 66 109 34 112" fill="none" stroke="#e3c393" stroke-width="5" stroke-linecap="round"/>
+    <path d="M43.2 111.3 L34 112" fill="none" stroke="#5a3d2b" stroke-width="5" stroke-linecap="round"/>
+    <circle cx="46" cy="32" r="4.5" fill="#c9a476"/>
+    <circle cx="82" cy="32" r="4.5" fill="#c9a476"/>
+    <circle cx="64" cy="38" r="19" fill="#e3c393"/>
+    <path d="M56 50 L72 50 L80 90 Q81.5 97 74.5 97 L53.5 97 Q46.5 97 48 90 Z" fill="#e3c393"/>
+    <path d="M58.5 60 L69.5 60 L75.5 89 Q76.5 93 72.5 93 L55.5 93 Q51.5 93 52.5 89 Z" fill="#efdab8"/>
+    <ellipse cx="56.5" cy="37" rx="5.4" ry="3.8" transform="rotate(28 56.5 37)" fill="#3b2a20"/>
+    <ellipse cx="71.5" cy="37" rx="5.4" ry="3.8" transform="rotate(-28 71.5 37)" fill="#3b2a20"/>
+    <circle cx="56.2" cy="36.2" r="1.6" fill="#f6ead6"/>
+    <circle cx="71.8" cy="36.2" r="1.6" fill="#f6ead6"/>
+    <ellipse cx="64" cy="48" rx="2.6" ry="1.9" fill="#3b2a20"/>
+  </g>
 </svg>

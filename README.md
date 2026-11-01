@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="data/icons/io.github.bvisagie.Countersign.svg" width="128" alt="Countersign's icon: a meerkat standing sentry, shaped like a keyhole">
+</p>
+
 # Countersign
 
 A fast, keyboard-first desktop app for Bitwarden on Omarchy and other

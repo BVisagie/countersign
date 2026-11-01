@@ -28,5 +28,8 @@ toml.workspace = true
 vte4 = { version = "0.10.0", optional = true, features = ["v0_76"] }
 zeroize.workspace = true
 
+[build-dependencies]
+glib-build-tools = "0.22.8"
+
 [lints]
 workspace = true

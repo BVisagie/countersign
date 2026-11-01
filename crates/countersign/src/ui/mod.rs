@@ -15,6 +15,12 @@ pub mod window;
 use countersign_ipc::ItemKind;
 use gtk::prelude::*;
 
+/// The sentry on watch, Countersign's mascot, shown before the vault opens.
+/// Like every icon built in from `data/icons`, it takes the theme's color.
+pub const SENTRY_ICON: &str = "io.github.bvisagie.Countersign-symbolic";
+/// The sentry at ease, shown in the open vault.
+pub const SENTRY_AT_EASE_ICON: &str = "io.github.bvisagie.Countersign-at-ease-symbolic";
+
 pub fn label(text: &str, classes: &[&str]) -> gtk::Label {
     gtk::Label::builder().label(text).xalign(0.0).css_classes(classes.to_vec()).build()
 }

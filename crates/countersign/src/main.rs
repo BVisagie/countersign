@@ -26,6 +26,7 @@ use crate::app::App;
 const APP_ID: &str = "io.github.bvisagie.Countersign";
 
 fn main() -> glib::ExitCode {
+    register_resources();
     let mut flags = gio::ApplicationFlags::HANDLES_COMMAND_LINE;
     if std::env::var_os("COUNTERSIGN_SCREENSHOT").is_some() {
         // Never hand screenshot runs to a running Countersign.
@@ -123,6 +124,12 @@ fn main() -> glib::ExitCode {
     gtk_app.run()
 }
 
+/// Registers the icons built in by `build.rs`. GTK adds the `icons` folder
+/// under the application's resource path to the icon theme at startup.
+fn register_resources() {
+    gio::resources_register_include!("countersign.gresource").expect("the built-in resources are valid");
+}
+
 fn install_actions(app: &Rc<App>) {
     let add = |name: &str, run: Rc<dyn Fn()>| {
         let action = gio::SimpleAction::new(name, None);
@@ -161,4 +168,21 @@ fn install_actions(app: &Rc<App>) {
     }
     app.gtk.set_accels_for_action("app.quit", &["<Control>q"]);
     app.gtk.set_accels_for_action("app.settings", &["<Control>comma"]);
+}
+
+#[cfg(test)]
+mod tests {
+    use gtk::gio;
+
+    #[test]
+    fn the_mascot_icons_are_built_in() {
+        super::register_resources();
+        for name in [crate::ui::SENTRY_ICON, crate::ui::SENTRY_AT_EASE_ICON] {
+            let path = format!("/io/github/bvisagie/Countersign/icons/scalable/apps/{name}.svg");
+            assert!(
+                gio::resources_lookup_data(&path, gio::ResourceLookupFlags::NONE).is_ok(),
+                "{path} is missing"
+            );
+        }
+    }
 }
