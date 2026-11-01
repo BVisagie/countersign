@@ -18,6 +18,7 @@ pub struct Generator {
     pub root: gtk::Widget,
     app: Rc<App>,
     value: gtk::Label,
+    copy: gtk::Button,
     current: RefCell<Option<Secret>>,
     notify: Rc<dyn Fn(&str)>,
     controls: Controls,
@@ -94,7 +95,12 @@ fn markup(value: &str) -> String {
 }
 
 impl Generator {
-    pub fn new(app: &Rc<App>, notify: Rc<dyn Fn(&str)>, header_start: Option<&gtk::Widget>) -> Rc<Self> {
+    pub fn new(
+        app: &Rc<App>,
+        notify: Rc<dyn Fn(&str)>,
+        header_start: Option<&gtk::Widget>,
+        receipt: &gtk::Widget,
+    ) -> Rc<Self> {
         let defaults = GenerateOptions::default();
         let value = gtk::Label::builder()
             .wrap(true)
@@ -173,11 +179,13 @@ impl Generator {
         let view = adw::ToolbarView::new();
         view.add_top_bar(&header);
         view.set_content(Some(&scroll));
+        view.add_bottom_bar(receipt);
 
         let generator = Rc::new(Generator {
             root: view.upcast(),
             app: app.clone(),
             value,
+            copy: copy.clone(),
             current: RefCell::default(),
             notify,
             controls: Controls {
@@ -256,7 +264,8 @@ impl Generator {
                 let me = me.clone();
                 glib::spawn_future_local(async move {
                     match me.app.request(Request::CopyValue { value, label: label.into() }).await {
-                        Ok(_) => (me.notify)(&format!("{label} copied")),
+                        // The receipt bar shows the copy and its countdown.
+                        Ok(_) => {}
                         Err(e) => (me.notify)(&e.message),
                     }
                 });
@@ -268,6 +277,11 @@ impl Generator {
         let passphrase = self.controls.options().passphrase;
         self.controls.password.set_visible(!passphrase);
         self.controls.passphrase.set_visible(passphrase);
+    }
+
+    /// Moves focus into the page.
+    pub fn focus(&self) {
+        self.copy.grab_focus();
     }
 
     /// Generates a value the first time the page is shown.

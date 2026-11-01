@@ -232,6 +232,7 @@ pub struct MainWindow {
     pub split: adw::OverlaySplitView,
     content: gtk::Stack,
     generator: Rc<super::generator::Generator>,
+    generator_receipt: Rc<Receipt>,
     items: RefCell<Vec<Rc<ItemSummary>>>,
     trash: RefCell<Vec<Rc<ItemSummary>>>,
     searcher: RefCell<Searcher>,
@@ -371,8 +372,15 @@ impl MainWindow {
             .tooltip_text("Show sidebar")
             .css_classes(["flat"])
             .build();
-        let generator =
-            super::generator::Generator::new(app, notify.clone(), Some(generator_toggle.upcast_ref()));
+        // The generator page shows clipboard receipts too; the vault's sits
+        // in the hidden list page while the generator is shown.
+        let generator_receipt = Receipt::new(app);
+        let generator = super::generator::Generator::new(
+            app,
+            notify.clone(),
+            Some(generator_toggle.upcast_ref()),
+            generator_receipt.root.upcast_ref(),
+        );
         let content = gtk::Stack::new();
         content.add_named(&nav, Some("vault"));
         content.add_named(&generator.root, Some("generator"));
@@ -445,6 +453,7 @@ impl MainWindow {
             split,
             content,
             generator,
+            generator_receipt,
             items: RefCell::default(),
             trash: RefCell::default(),
             searcher: RefCell::default(),
@@ -497,6 +506,10 @@ impl MainWindow {
             }
         });
         action("focus-search", |me| {
+            // Searching means the vault: leave the generator for it first.
+            if me.content.visible_child_name().as_deref() != Some("vault") {
+                me.show_vault_filter(Filter::All);
+            }
             me.search.grab_focus();
             me.search.select_region(0, -1);
         });
@@ -838,6 +851,14 @@ impl MainWindow {
 }
 
 impl MainWindow {
+    /// Selects a vault filter in the sidebar, which also shows the vault.
+    fn show_vault_filter(&self, filter: Filter) {
+        let index = self.filters.borrow().iter().position(|f| *f == filter);
+        if let Some(row) = index.and_then(|i| self.sidebar.row_at_index(i as i32)) {
+            self.sidebar.select_row(Some(&row));
+        }
+    }
+
     /// Updates only the sync time, without touching any other page.
     fn update_sync_label(&self, status: &Status) {
         self.sync_label.set_label(&match (status.syncing, &status.last_sync) {
@@ -882,7 +903,12 @@ impl View for MainWindow {
             self.unlock.focus();
         }
         if page == "vault" && previous.as_deref() != Some("vault") {
-            self.search.grab_focus();
+            // Focus what is shown: the search, unless the generator is.
+            if self.content.visible_child_name().as_deref() == Some("vault") {
+                self.search.grab_focus();
+            } else {
+                self.generator.focus();
+            }
         }
         let account = status.account.as_ref();
         self.account_email.set_label(account.and_then(|a| a.email.as_deref()).unwrap_or("Not signed in"));
@@ -911,5 +937,6 @@ impl View for MainWindow {
 
     fn clipboard(&self, event: &ClipboardEvent) {
         self.receipt.show(event);
+        self.generator_receipt.show(event);
     }
 }
