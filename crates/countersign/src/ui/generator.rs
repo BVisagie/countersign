@@ -314,6 +314,12 @@ impl Generator {
 
     /// Forgets the shown value, for example when the vault locks.
     pub fn clear(&self) {
+        // Drop any regeneration still waiting or in flight, so it cannot
+        // bring a value back after the lock.
+        self.generation.set(self.generation.get() + 1);
+        if let Some(source) = self.pending.borrow_mut().take() {
+            source.remove();
+        }
         self.current.borrow_mut().take();
         self.value.set_label("");
     }

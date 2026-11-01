@@ -510,7 +510,7 @@ impl MainWindow {
             glib::timeout_add_seconds_local(60, move || {
                 let Some(me) = weak.upgrade() else { return glib::ControlFlow::Break };
                 let status = me.app.status.borrow().clone();
-                me.status_changed(&status);
+                me.update_sync_label(&status);
                 glib::ControlFlow::Continue
             });
         }
@@ -521,12 +521,14 @@ impl MainWindow {
                 let (Some(me), Some(row)) = (weak.upgrade(), row) else { return };
                 let filter = me.filters.borrow().get(row.index() as usize).cloned();
                 if let Some(filter) = filter {
+                    // The selection, generator included, is what the sidebar
+                    // restores after a sync rebuilds it.
                     let tool = filter == Filter::Generator;
+                    *me.filter.borrow_mut() = filter;
                     me.content.set_visible_child_name(if tool { "generator" } else { "vault" });
                     if tool {
                         me.generator.ensure_value();
                     } else {
-                        *me.filter.borrow_mut() = filter;
                         me.refresh_list();
                     }
                     if me.split.is_collapsed() {
@@ -835,6 +837,17 @@ impl MainWindow {
     }
 }
 
+impl MainWindow {
+    /// Updates only the sync time, without touching any other page.
+    fn update_sync_label(&self, status: &Status) {
+        self.sync_label.set_label(&match (status.syncing, &status.last_sync) {
+            (true, _) => "Syncing…".to_owned(),
+            (false, Some(when)) => format!("Synced {}", relative_time(when)),
+            (false, None) => String::new(),
+        });
+    }
+}
+
 fn focus_in_editable(window: &adw::ApplicationWindow) -> bool {
     gtk::prelude::GtkWindowExt::focus(window).is_some_and(|w| w.is::<gtk::Text>() || w.is::<gtk::Entry>())
 }
@@ -877,11 +890,7 @@ impl View for MainWindow {
         if status.vault != VaultState::Unlocked {
             self.generator.clear();
         }
-        self.sync_label.set_label(&match (status.syncing, &status.last_sync) {
-            (true, _) => "Syncing…".to_owned(),
-            (false, Some(when)) => format!("Synced {}", relative_time(when)),
-            (false, None) => String::new(),
-        });
+        self.update_sync_label(status);
         self.dot.set_css_classes(&match (status.vault, status.syncing) {
             (_, true) => vec!["cs-dot", "syncing"],
             (VaultState::Unlocked, _) => vec!["cs-dot"],
