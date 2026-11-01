@@ -47,18 +47,47 @@ measured performance.
   the official release for you, verified against Bitwarden's published
   checksum.
 
-## Build
+## Install
 
 ```bash
-cargo build --release
+scripts/install.sh
 ```
 
 This builds `countersign` (the app) and `countersignd` (its background
-service). Bind quick access in `~/.config/hypr/bindings.lua`, for example:
+service), installs them in `~/.local/bin`, and adds the desktop entry and
+icon. Then add quick access and autostart to Hyprland:
 
 ```lua
+-- ~/.config/hypr/bindings.lua
 o.bind("SUPER + SHIFT + P", "Passwords", "countersign --quick")
+-- ~/.config/hypr/autostart.lua
+o.launch_on_start("countersign --background")
 ```
+
+On first run Countersign offers to install the official CLI. It downloads the
+pinned release from Bitwarden's GitHub, checks it against the recorded
+SHA-256, and keeps it in `~/.local/share/countersign/bitwarden-cli/`. You can
+point it at a CLI of your own in Settings instead.
+
+## Use
+
+| Key | Action |
+| --- | --- |
+| `Enter` | Copy the password, card number or note |
+| `Shift+Enter` (quick access) | Copy the username or security code |
+| `Ctrl+C` / `Ctrl+B` / `Ctrl+T` | Copy the password / username / verification code |
+| `Ctrl+U` | Open the website |
+| `Ctrl+O` (quick access) | Show the item in the main window |
+| `Ctrl+F` or `/` | Search |
+| `Ctrl+R` | Sync |
+| `Ctrl+L` | Lock |
+| `Ctrl+,` | Settings |
+| `Esc` | Clear the search, then close quick access |
+
+Copies made from quick access show a notification. When the verification
+code is about to replace a copied password, the notification and the main
+window offer **Keep password**. The tray icon shows whether the vault is open;
+click it for Countersign, or use its menu for quick access and locking.
 
 ## How it works
 

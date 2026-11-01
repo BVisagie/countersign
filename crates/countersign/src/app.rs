@@ -5,10 +5,11 @@ use std::rc::{Rc, Weak};
 use std::time::Duration;
 
 use countersign_ipc::{
-    ClipboardEvent, ErrorCode, Event, Field, IpcError, PROTOCOL_VERSION, Request, Response, Secret, Settings,
-    Status, VaultSnapshot, VaultState,
+    ClipboardEvent, ClipboardState, ErrorCode, Event, Field, IpcError, PROTOCOL_VERSION, Request, Response,
+    Secret, Settings, Status, VaultSnapshot, VaultState,
 };
-use gtk::glib;
+use gtk::prelude::*;
+use gtk::{gio, glib};
 
 use crate::demo::Demo;
 use crate::socket::SocketClient;
@@ -165,7 +166,10 @@ impl App {
             Some(Event::Status { status }) => self.set_status(status),
             Some(Event::VaultChanged) => self.schedule_vault_reload(),
             Some(Event::Recent { ids }) => *self.recent.borrow_mut() = ids,
-            Some(Event::Clipboard { clipboard }) => self.each_view(|v| v.clipboard(&clipboard)),
+            Some(Event::Clipboard { clipboard }) => {
+                self.each_view(|v| v.clipboard(&clipboard));
+                self.notify_clipboard(&clipboard);
+            }
             None => {
                 // The daemon went away; reconnect on the next request.
                 let app = self.clone();
@@ -276,6 +280,41 @@ impl App {
     /// Asks for the master password for one item. `Ok(false)` if cancelled.
     pub async fn reprompt(self: &Rc<Self>, parent: &gtk::Widget, id: &str) -> Result<bool, IpcError> {
         crate::ui::reprompt::ask(self, parent, id).await
+    }
+
+    /// Tells the user about a copy made outside the main window, such as
+    /// from quick access, which closes as it copies.
+    fn notify_clipboard(&self, event: &ClipboardEvent) {
+        const ID: &str = "countersign-clipboard";
+        if std::env::var_os("COUNTERSIGN_SCREENSHOT").is_some() {
+            return;
+        }
+        if crate::ui::window::current().is_some_and(|w| w.window.is_active()) {
+            return;
+        }
+        if event.state == ClipboardState::Cleared {
+            self.gtk.withdraw_notification(ID);
+            return;
+        }
+        let notification = gio::Notification::new(&event.label);
+        let mut body = Vec::new();
+        if let Some(item) = &event.item_name {
+            body.push(item.clone());
+        }
+        if let Some(secs) = event.follow_up_in {
+            body.push(format!("the code replaces it in {secs} s"));
+        }
+        if let Some(secs) = event.clears_in {
+            body.push(format!("clears in {secs} s"));
+        }
+        notification.set_body(Some(&body.join(" · ")));
+        if event.follow_up_in.is_some() {
+            notification.add_button("Keep password", "app.skip-follow-up");
+        }
+        if event.state == ClipboardState::Failed {
+            notification.set_priority(gio::NotificationPriority::High);
+        }
+        self.gtk.send_notification(Some(ID), &notification);
     }
 
     pub fn show_main(self: &Rc<Self>) {

@@ -305,6 +305,7 @@ impl MainWindow {
         section.append(Some("Sync now"), Some("win.sync"));
         menu.append_section(None, &section);
         let section = gio::Menu::new();
+        section.append(Some("Settings"), Some("app.settings"));
         section.append(Some("Lock"), Some("win.lock"));
         section.append(Some("Sign out…"), Some("win.sign-out"));
         menu.append_section(None, &section);

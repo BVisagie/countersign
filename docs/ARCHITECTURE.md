@@ -60,6 +60,17 @@ its values remain on the clipboard.
   display session; and a logind sleep delay inhibitor held only while
   unlocked, released after locking.
 
+## Installing the CLI
+
+Only when you ask, the daemon downloads the pinned release archive for this
+machine from Bitwarden's GitHub release over HTTPS, hashing it as it streams
+and refusing it unless the SHA-256 matches the digest recorded with the pin.
+It extracts only `bw`, runs `bw --version` in an empty profile, requires
+exactly the pinned version, and moves it into
+`~/.local/share/countersign/bitwarden-cli/<version>/` with one rename. A CLI
+you configured is never replaced; installing switches Countersign to the
+managed copy.
+
 ## The app
 
 `countersign` is a single-instance GTK application that stays running in the
@@ -70,6 +81,10 @@ The app talks to the daemon with GIO's asynchronous socket API on the main
 loop, so it has no threads of its own. Search ranks the index in the app with
 nucleo's fuzzy matcher. Lists are `GtkListView`s, which create rows only for
 what is visible.
+
+A StatusNotifierItem tray icon (ksni) shows the lock state and opens the
+windows. Copies made while the main window is not focused raise a desktop
+notification, withdrawn when the value is cleared.
 
 The theme reads `colors.toml` from the active Omarchy theme, maps it onto
 libadwaita's color variables, matches Hyprland's `decoration:rounding`, and

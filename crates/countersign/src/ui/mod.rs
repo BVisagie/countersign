@@ -3,6 +3,7 @@
 pub mod detail;
 pub mod gates;
 pub mod items;
+pub mod prefs;
 pub mod quick;
 pub mod reprompt;
 pub mod window;

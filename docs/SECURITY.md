@@ -36,6 +36,13 @@ server protocol. Those stay in the official CLI.
   and are cleared after the timeout or on lock, but never if another app has
   replaced them since.
 
+## The CLI download
+
+Installing the CLI trusts Bitwarden's GitHub release and HTTPS, and the
+SHA-256 recorded in Countersign's source with each pin; a mismatch is
+refused before anything is extracted or run. Countersign never downloads or
+updates anything in the background.
+
 ## Memory
 
 The daemon disables core dumps and same-user debugger attachment before it

@@ -1,0 +1,21 @@
+[Desktop Entry]
+Type=Application
+Name=Countersign
+GenericName=Password Manager
+Comment=Your Bitwarden vault, through the official Bitwarden CLI
+Exec=countersign
+Icon=io.github.bvisagie.Countersign
+Terminal=false
+Categories=Utility;Security;
+Keywords=password;passwords;bitwarden;vault;totp;
+StartupNotify=true
+StartupWMClass=io.github.bvisagie.Countersign
+Actions=quick;lock;
+
+[Desktop Action quick]
+Name=Quick access
+Exec=countersign --quick
+
+[Desktop Action lock]
+Name=Lock the vault
+Exec=countersign --lock
