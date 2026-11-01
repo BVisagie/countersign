@@ -9,9 +9,11 @@ use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
-use countersign_bw::{AuthStatus, BwError, Cli, ListOptions, PINNED_VERSION, Serve, ServeClient, SessionKey};
+use countersign_bw::{
+    AuthStatus, BwError, Cli, CliVersion, ListOptions, PINNED_VERSION, Serve, ServeClient, SessionKey,
+};
 use countersign_ipc::{
     Account, CliState, ClipboardEvent, ClipboardState, Collection, ErrorCode, Event, Folder, IpcError,
     Organization, Settings, Status, VaultSnapshot, VaultState, summarize,
@@ -43,6 +45,28 @@ pub enum LockReason {
 struct Session {
     serve: Serve,
     key: SessionKey,
+}
+
+/// Identifies one CLI executable: replacing or updating it changes this.
+#[derive(Debug, PartialEq, Eq)]
+struct CliFile {
+    path: PathBuf,
+    inode: u64,
+    len: u64,
+    modified: Option<SystemTime>,
+}
+
+impl CliFile {
+    fn of(path: &std::path::Path) -> Option<Self> {
+        use std::os::unix::fs::MetadataExt;
+        let meta = std::fs::metadata(path).ok()?;
+        Some(CliFile {
+            path: path.to_owned(),
+            inode: meta.ino(),
+            len: meta.len(),
+            modified: meta.modified().ok(),
+        })
+    }
 }
 
 #[derive(Default)]
@@ -79,6 +103,9 @@ pub struct Daemon {
     /// Serializes rebuilding the vault index.
     rebuild: tokio::sync::Mutex<()>,
     cli: Mutex<Option<Cli>>,
+    /// The last executable whose version passed, so `bw --version` runs once
+    /// per file rather than on every refresh.
+    checked_version: Mutex<Option<(CliFile, CliVersion)>>,
     session: Mutex<Option<Session>>,
     /// A CLI being unlocked, kept where `lock` can stop it.
     opening: Mutex<Option<Serve>>,
@@ -115,6 +142,7 @@ impl Daemon {
             ops: tokio::sync::Mutex::new(()),
             rebuild: tokio::sync::Mutex::new(()),
             cli: Mutex::new(None),
+            checked_version: Mutex::new(None),
             session: Mutex::new(None),
             opening: Mutex::new(None),
             prepared: Mutex::new(None),
@@ -250,7 +278,7 @@ impl Daemon {
             return;
         };
         let cli = Cli::new(path, &self.paths.profile_dir);
-        let cli_state = match cli.version().await {
+        let cli_state = match self.version(&cli).await {
             Ok(version) => CliState::Ready { version: version.to_string(), managed },
             Err(BwError::CliMissing(_)) => CliState::Missing,
             Err(BwError::Unsupported { found, minimum }) => {
@@ -297,6 +325,27 @@ impl Daemon {
                 s.vault = VaultState::Unknown;
             }),
         }
+    }
+
+    /// The CLI's version, read once per executable file.
+    async fn version(&self, cli: &Cli) -> Result<CliVersion, BwError> {
+        let file = CliFile::of(cli.path());
+        if let Some(file) = &file
+            && let Some((checked, version)) = &*self.checked_version.lock().expect("version")
+            && checked == file
+        {
+            return Ok(*version);
+        }
+        let version = cli.version().await?;
+        if let Some(file) = file {
+            *self.checked_version.lock().expect("version") = Some((file, version));
+        }
+        Ok(version)
+    }
+
+    /// Makes the next refresh read the CLI's version again.
+    pub(crate) fn forget_version(&self) {
+        *self.checked_version.lock().expect("version") = None;
     }
 
     // ----- Unlocking and locking ---------------------------------------
@@ -829,5 +878,45 @@ mod tests {
         // A failed attempt in the current epoch settles back to Locked.
         daemon.settle_locked(daemon.epoch());
         assert_eq!(daemon.status().vault, VaultState::Locked);
+    }
+
+    /// Stands in for the CLI: logs each call to the profile folder and
+    /// remembers the server it is pointed at.
+    const FAKE_CLI: &str = r#"#!/bin/sh
+dir="$BITWARDENCLI_APPDATA_DIR"
+echo "$*" >> "$dir/calls"
+case "$1" in
+    --version) echo 2026.10.1 ;;
+    config) printf '%s' "$3" > "$dir/server"; echo 'Saved setting `config`.' ;;
+    status)
+        if [ -f "$dir/server" ]; then url="\"$(cat "$dir/server")\""; else url=null; fi
+        printf '{"serverUrl":%s,"lastSync":null,"status":"unauthenticated"}' "$url"
+        exec sleep 3 ;;
+esac
+"#;
+
+    /// Switching servers runs `config server` and `status`; the version is
+    /// read once per executable, and again when the user asks to check.
+    #[tokio::test]
+    async fn server_switch_runs_only_what_it_needs() {
+        use std::os::unix::fs::PermissionsExt;
+        let (daemon, root) = daemon();
+        let bw = root.path().join("bw");
+        std::fs::write(&bw, FAKE_CLI).unwrap();
+        std::fs::set_permissions(&bw, std::fs::Permissions::from_mode(0o700)).unwrap();
+        daemon.set_settings(Settings { cli_path: Some(bw), ..Settings::default() });
+        let calls = || std::fs::read_to_string(root.path().join("profile/calls")).unwrap();
+
+        daemon.refresh().await;
+        assert_eq!(daemon.status().vault, VaultState::LoggedOut);
+        let started = Instant::now();
+        let request = countersign_ipc::Request::SetServer { url: Some("https://vault.bitwarden.eu/".into()) };
+        daemon.handle(request).await.unwrap();
+        assert!(started.elapsed() < Duration::from_secs(2), "waited for the CLI to exit");
+        assert_eq!(daemon.status().server_url.as_deref(), Some("https://vault.bitwarden.eu"));
+        assert_eq!(calls(), "--version\nstatus\nconfig server https://vault.bitwarden.eu\nstatus\n");
+
+        daemon.handle(countersign_ipc::Request::Refresh).await.unwrap();
+        assert!(calls().ends_with("status\n--version\nstatus\n"));
     }
 }
