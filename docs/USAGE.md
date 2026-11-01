@@ -148,7 +148,8 @@ like any other copy.
 ## Locking
 
 Lock with `Ctrl+L`, the tray's **Lock**, or `countersign --lock`. Quitting
-with `Ctrl+Q` or the tray's **Quit** locks the vault too.
+locks the vault too, whether with `Ctrl+Q`, the tray's **Quit**, or closing
+the window with **Keep running when closed** off.
 Countersign also locks:
 
 - after 15 minutes without using it,
@@ -179,7 +180,7 @@ Open them with `Ctrl+,` or the menu. Changes apply as you make them.
 | Lock with the screen | On | |
 | Lock before sleep | On | |
 | Sync every | 10 minutes | 0 syncs only when unlocking |
-| Keep running when closed | On | Off quits when you close the window |
+| Keep running when closed | On | Off quits, and locks, when you close the window |
 
 **Desktop** has the Hyprland lines with copy buttons. **Account** signs you
 out. **Bitwarden CLI** shows the CLI in use and lets you choose another; see
