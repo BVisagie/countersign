@@ -44,6 +44,10 @@ pub struct App {
     views: RefCell<Vec<Weak<dyn View>>>,
     vault_reload: RefCell<Option<glib::SourceId>>,
     last_activity: Cell<Option<std::time::Instant>>,
+    /// Unlocks and sign-ins this app started that have not answered yet.
+    pending_opens: Cell<u32>,
+    /// The vault's items have arrived since it was last unlocked.
+    loaded: Cell<bool>,
 }
 
 impl App {
@@ -69,6 +73,8 @@ impl App {
             views: RefCell::new(Vec::new()),
             vault_reload: RefCell::new(None),
             last_activity: Cell::new(None),
+            pending_opens: Cell::new(0),
+            loaded: Cell::new(false),
         });
         let weak = Rc::downgrade(&app);
         glib::spawn_future_local(async move {
@@ -189,6 +195,9 @@ impl App {
         let was = self.status.borrow().vault;
         let now = status.vault;
         *self.status.borrow_mut() = status.clone();
+        if now != VaultState::Unlocked {
+            self.loaded.set(false);
+        }
         if now == VaultState::Unlocked && was != VaultState::Unlocked {
             self.schedule_vault_reload();
         } else if now != VaultState::Unlocked && was == VaultState::Unlocked {
@@ -199,6 +208,34 @@ impl App {
             self.each_view(|v| v.vault_changed(&vault));
         }
         self.each_view(|v| v.status_changed(&status));
+        self.update_actions();
+    }
+
+    /// Whether the vault is opening, whichever window started it. Views
+    /// show no vault and offer nothing that would stop it until it ends.
+    pub fn opening(&self) -> bool {
+        opening(self.status.borrow().vault, self.pending_opens.get(), self.loaded.get())
+    }
+
+    /// Marks an unlock or sign-in this app started, until the guard drops.
+    pub fn begin_opening(self: &Rc<Self>) -> Opening {
+        self.pending_opens.set(self.pending_opens.get() + 1);
+        self.refresh_views();
+        Opening(Rc::downgrade(self))
+    }
+
+    /// Shows the current status again, after `opening` changed.
+    fn refresh_views(self: &Rc<Self>) {
+        let status = self.status.borrow().clone();
+        self.each_view(|v| v.status_changed(&status));
+        self.update_actions();
+    }
+
+    /// Settings can sign out or change the CLI, which would stop an open.
+    fn update_actions(&self) {
+        if let Some(settings) = self.gtk.lookup_action("settings").and_downcast::<gio::SimpleAction>() {
+            settings.set_enabled(!self.opening());
+        }
     }
 
     fn schedule_vault_reload(self: &Rc<Self>) {
@@ -224,6 +261,12 @@ impl App {
             *self.vault.borrow_mut() = vault.clone();
             self.each_view(|v| v.vault_changed(&vault));
             timing(&format!("vault: {count} items fetched in {fetched:?}, shown in {:?}", start.elapsed()));
+        }
+        // The vault shows once its items are in place. A failed load shows
+        // it too, rather than leaving the window on "Opening your vault…".
+        if self.status.borrow().vault == VaultState::Unlocked && !self.loaded.get() {
+            self.loaded.set(true);
+            self.refresh_views();
         }
     }
 
@@ -332,9 +375,53 @@ impl App {
     }
 }
 
+/// An open this app started; see [`App::begin_opening`].
+pub struct Opening(Weak<App>);
+
+impl Drop for Opening {
+    fn drop(&mut self) {
+        if let Some(app) = self.0.upgrade() {
+            app.pending_opens.set(app.pending_opens.get().saturating_sub(1));
+            app.refresh_views();
+        }
+    }
+}
+
+/// Whether the vault is opening: the daemon is unlocking it, its items are
+/// still on the way, or an unlock or sign-in from this app has not answered.
+fn opening(vault: VaultState, pending: u32, loaded: bool) -> bool {
+    match vault {
+        VaultState::Unlocking => true,
+        VaultState::Unlocked => !loaded,
+        VaultState::Locked | VaultState::LoggedOut | VaultState::Unknown => pending > 0,
+    }
+}
+
 /// Prints a timing line when `COUNTERSIGN_TIMING` is set.
 pub fn timing(message: &str) {
     if std::env::var_os("COUNTERSIGN_TIMING").is_some() {
         eprintln!("countersign timing: {message}");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::opening;
+    use countersign_ipc::VaultState;
+
+    #[test]
+    fn opening_lasts_until_the_items_arrive() {
+        // An unlock from this app counts before the daemon reports it.
+        assert!(opening(VaultState::Locked, 1, false));
+        assert!(opening(VaultState::LoggedOut, 1, false));
+        assert!(!opening(VaultState::Locked, 0, false));
+        assert!(!opening(VaultState::LoggedOut, 0, false));
+        // The daemon's word covers opens from any window.
+        assert!(opening(VaultState::Unlocking, 0, false));
+        // Unlocked, the vault waits for its items, answered or not.
+        assert!(opening(VaultState::Unlocked, 0, false));
+        assert!(opening(VaultState::Unlocked, 1, false));
+        assert!(!opening(VaultState::Unlocked, 1, true));
+        assert!(!opening(VaultState::Unlocked, 0, true));
     }
 }

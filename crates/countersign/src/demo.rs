@@ -229,14 +229,22 @@ impl Demo {
             R::Status | R::Refresh => Ok(Response::Status { status: self.status() }),
             R::Activity | R::PrepareUnlock | R::SkipFollowUp => Ok(Response::Ok),
             R::Unlock { password } => {
-                if password.is_empty() {
+                // As long as a real unlock can take, so its wait can be seen.
+                self.state.borrow_mut().vault = VaultState::Unlocking;
+                self.emit(Event::Status { status: self.status() });
+                gtk::glib::timeout_future(std::time::Duration::from_millis(1500)).await;
+                if self.state.borrow().vault != VaultState::Unlocking {
+                    return Err(IpcError::new(ErrorCode::Locked, "The vault was locked while it opened."));
+                }
+                let wrong = password.is_empty() || password.expose() == "wrong";
+                self.state.borrow_mut().vault = if wrong { VaultState::Locked } else { VaultState::Unlocked };
+                self.emit(Event::Status { status: self.status() });
+                if wrong {
                     return Err(IpcError::new(
                         ErrorCode::WrongPassword,
                         "That master password is incorrect.",
                     ));
                 }
-                self.state.borrow_mut().vault = VaultState::Unlocked;
-                self.emit(Event::Status { status: self.status() });
                 self.emit(Event::VaultChanged);
                 Ok(Response::Ok)
             }

@@ -51,13 +51,18 @@ fn mark() -> gtk::Label {
 }
 
 /// The unlock form, used by the main window and quick access.
+///
+/// While the vault opens, from this form or anywhere else, the form takes
+/// no input and offers no way to sign out.
 pub struct Unlock {
     pub root: gtk::Widget,
     entry: gtk::PasswordEntry,
     button: gtk::Button,
+    sign_out: gtk::Button,
     error: gtk::Label,
     account: gtk::Label,
     server: gtk::Label,
+    busy: Cell<bool>,
 }
 
 impl Unlock {
@@ -93,23 +98,32 @@ impl Unlock {
         if !compact {
             column.append(&sign_out);
         }
-        let unlock = Rc::new(Unlock { root: wrap(&column), entry, button, error, account, server });
+        let unlock = Rc::new(Unlock {
+            root: wrap(&column),
+            entry,
+            button,
+            sign_out,
+            error,
+            account,
+            server,
+            busy: Cell::new(false),
+        });
 
         let submit = {
             let (app, me) = (app.clone(), Rc::downgrade(&unlock));
             move || {
                 let Some(me) = me.upgrade() else { return };
                 let text = me.entry.text();
-                if text.is_empty() {
+                if text.is_empty() || me.busy.get() {
                     return;
                 }
                 let password = Secret::new(text.as_str());
                 me.entry.set_text("");
-                me.set_busy(true);
+                me.error.set_visible(false);
+                let opening = app.begin_opening();
                 let app = app.clone();
                 glib::spawn_future_local(async move {
                     let result = app.request(Request::Unlock { password }).await;
-                    me.set_busy(false);
                     if let Err(e) = result {
                         me.error.set_label(if e.code == ErrorCode::WrongPassword {
                             "That master password is incorrect."
@@ -117,8 +131,10 @@ impl Unlock {
                             &e.message
                         });
                         me.error.set_visible(true);
-                        me.entry.grab_focus();
                     }
+                    // The form stays busy until the daemon says the attempt
+                    // is over; see `set_busy`.
+                    drop(opening);
                 });
             }
         };
@@ -127,29 +143,43 @@ impl Unlock {
         unlock.button.connect_clicked(move |_| submit());
         {
             let app = app.clone();
-            sign_out.connect_clicked(move |button| confirm_sign_out(&app, button.upcast_ref()));
+            unlock.sign_out.connect_clicked(move |button| confirm_sign_out(&app, button.upcast_ref()));
         }
         {
-            // Start the CLI while the password is typed.
+            // Start the CLI while the password is typed. An open already
+            // under way has its own.
             let app = app.clone();
-            unlock.root.connect_map(move |_| app.fire(Request::PrepareUnlock));
+            unlock.root.connect_map(move |_| {
+                if !app.opening() {
+                    app.fire(Request::PrepareUnlock);
+                }
+            });
         }
         unlock
     }
 
     fn set_busy(&self, busy: bool) {
+        let was = self.busy.replace(busy);
         self.entry.set_sensitive(!busy);
         self.button.set_sensitive(!busy);
+        self.sign_out.set_sensitive(!busy);
         set_button_busy(&self.button, busy);
-        if busy {
+        if busy && !was {
             self.error.set_visible(false);
+        }
+        // A failed attempt hands the field back for another try.
+        if was && !busy && self.error.is_visible() && self.entry.is_mapped() {
+            self.entry.grab_focus();
         }
     }
 
-    pub fn set_status(&self, status: &Status) {
+    /// Follows the daemon's status; `opening` is [`App::opening`]. Once the
+    /// vault is open the form stays busy as it fades out.
+    pub fn set_status(&self, status: &Status, opening: bool) {
         let account = status.account.as_ref();
         self.account.set_label(account.and_then(|a| a.email.as_deref()).unwrap_or(""));
         self.server.set_label(&server_name(account.and_then(|a| a.server_url.as_deref())));
+        self.set_busy(opening || status.vault == VaultState::Unlocked);
     }
 
     pub fn focus(&self) {
