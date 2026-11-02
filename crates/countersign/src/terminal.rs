@@ -197,7 +197,7 @@ pub async fn login(app: &Rc<App>, parent: &gtk::Widget, launch: TerminalLaunch) 
                 .flatten();
             // A closed dialog hangs up the CLI: that is no failure to report.
             if status != 0 && !dismissed.get() {
-                *failure.borrow_mut() = failure_reason(text);
+                *failure.borrow_mut() = failure_reason(status, text);
             }
             // Wipe what the terminal showed, including the session key.
             terminal.reset(true, true);
@@ -250,10 +250,14 @@ fn first_line(text: &str) -> (&str, bool) {
 /// cannot use: a security key or passkey (FIDO2), or Duo.
 const NO_PROVIDERS: &str = "No providers available for this client.";
 
-/// Why `bw login` failed, from the terminal's text once the CLI exits: the
-/// CLI's error is its last line. None when the user stopped the CLI at a
-/// prompt or chose Cancel.
-fn failure_reason(text: &str) -> Option<String> {
+/// Why `bw login` failed, from its wait status and the terminal's text once
+/// it exits: the CLI's error is its last line. None when the user stopped the
+/// CLI or chose Cancel.
+fn failure_reason(status: i32, text: &str) -> Option<String> {
+    // Ctrl+C ends the CLI with SIGINT, and may leave a menu on screen.
+    if libc::WIFSIGNALED(status) {
+        return None;
+    }
     let mut lines = text.lines().map(str::trim).filter(|l| !l.is_empty()).rev();
     let Some(last) = lines.next() else {
         return Some("The Bitwarden CLI stopped before it could sign in.".into());
@@ -304,6 +308,11 @@ const VTE_SPAWN_NO_PARENT_ENVV: u32 = 1 << 25;
 mod tests {
     use super::{failure_reason, first_line};
 
+    /// The wait statuses VTE reports: an exit code, or the signal that
+    /// ended the CLI.
+    const EXIT_1: i32 = 1 << 8;
+    const SIGINT: i32 = libc::SIGINT;
+
     #[test]
     fn pastes_one_line_without_its_line_break() {
         assert_eq!(first_line("correct horse "), ("correct horse ", false));
@@ -319,24 +328,27 @@ mod tests {
     fn reports_the_clis_error() {
         let wrong = "? Email address: alex@example.com\n? Master password: [hidden]\nInvalid master password. Confirm your email is correct and your account was created on vault.bitwarden.com.\n\n";
         assert_eq!(
-            failure_reason(wrong).as_deref(),
+            failure_reason(EXIT_1, wrong).as_deref(),
             Some(
                 "Invalid master password. Confirm your email is correct and your account was created on vault.bitwarden.com."
             )
         );
         let unsupported = "? Email address: alex@example.com\n? Master password: [hidden]\nNo providers available for this client.\n";
-        let reason = failure_reason(unsupported).unwrap();
+        let reason = failure_reason(EXIT_1, unsupported).unwrap();
         assert!(reason.contains("security keys, passkeys or Duo"), "{reason}");
         assert!(reason.contains("API key"), "{reason}");
-        assert!(failure_reason("\n  \n").is_some());
+        assert!(failure_reason(EXIT_1, "\n  \n").is_some());
     }
 
     #[test]
     fn says_nothing_when_the_user_stopped_it() {
-        assert_eq!(failure_reason("? Email address: alex@example.com\n? Master password: "), None);
+        assert_eq!(failure_reason(EXIT_1, "? Email address: alex@example.com\n? Master password: "), None);
         let cancel = "? Master password: [hidden]\n? Two-step login method: Cancel\nLogin failed.\n";
-        assert_eq!(failure_reason(cancel), None);
+        assert_eq!(failure_reason(EXIT_1, cancel), None);
         let rejected = "? Two-step login code: 123456\nLogin failed.\n";
-        assert_eq!(failure_reason(rejected).as_deref(), Some("Login failed."));
+        assert_eq!(failure_reason(EXIT_1, rejected).as_deref(), Some("Login failed."));
+        // Ctrl+C at the method list leaves the menu, its last line a choice.
+        let menu = "? Two-step login method: (Use arrow keys)\n❯ Authenticator app\n  Email\n──────────────\n  Cancel\n";
+        assert_eq!(failure_reason(SIGINT, menu), None);
     }
 }
