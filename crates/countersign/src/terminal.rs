@@ -2,7 +2,8 @@
 //! prompts handle the email, master password, two-step and new-device codes.
 //! When it succeeds, the session key `bw login --raw` prints is handed to the
 //! daemon so the vault opens without typing the password twice; the terminal
-//! is then wiped.
+//! is then wiped. When it fails, the CLI's error is kept to show on the
+//! sign-in page.
 //!
 //! The terminal pastes the clipboard with the keys a text field uses, and
 //! from a button, one line at a time: a paste never presses Enter or answers
@@ -21,7 +22,8 @@ use crate::app::App;
 /// Runs `bw login` in a dialog over `parent` and returns once the dialog
 /// closes. Until the CLI draws its first prompt, the dialog says so instead
 /// of showing an empty terminal. Once it succeeds, the dialog closes and the
-/// window shows the vault opening.
+/// window shows the vault opening. When it fails, the error says why, unless
+/// the user stopped it.
 pub async fn login(app: &Rc<App>, parent: &gtk::Widget, launch: TerminalLaunch) -> Result<(), String> {
     let terminal = vte4::Terminal::new();
     terminal.set_vexpand(true);
@@ -156,7 +158,7 @@ pub async fn login(app: &Rc<App>, parent: &gtk::Widget, launch: TerminalLaunch) 
     let envv_ref: Vec<&str> = envv.iter().map(String::as_str).collect();
     let home = std::env::var("HOME").ok();
     {
-        let (dialog, failure) = (dialog.downgrade(), failure.clone());
+        let (dialog, failure, dismissed) = (dialog.downgrade(), failure.clone(), dismissed.clone());
         terminal.spawn_async(
             vte4::PtyFlags::DEFAULT,
             home.as_deref(),
@@ -184,14 +186,19 @@ pub async fn login(app: &Rc<App>, parent: &gtk::Widget, launch: TerminalLaunch) 
     }
     {
         // Weak: the terminal belongs to the dialog.
-        let (app, dialog) = (app.clone(), dialog.downgrade());
+        let (app, dialog, failure) = (app.clone(), dialog.downgrade(), failure.clone());
         terminal.connect_child_exited(move |terminal, status| {
             exited.set(true);
             paste_button.set_sensitive(false);
-            let session =
-                (status == 0).then(|| terminal.text_format(vte4::Format::Text)).flatten().and_then(|text| {
-                    text.lines().rev().map(str::trim).find(|l| !l.is_empty()).map(str::to_owned)
-                });
+            let text = terminal.text_format(vte4::Format::Text);
+            let text = text.as_deref().unwrap_or_default();
+            let session = (status == 0)
+                .then(|| text.lines().rev().map(str::trim).find(|l| !l.is_empty()).map(str::to_owned))
+                .flatten();
+            // A closed dialog hangs up the CLI: that is no failure to report.
+            if status != 0 && !dismissed.get() {
+                *failure.borrow_mut() = failure_reason(text);
+            }
             // Wipe what the terminal showed, including the session key.
             terminal.reset(true, true);
             terminal.set_opacity(0.0);
@@ -239,6 +246,35 @@ fn first_line(text: &str) -> (&str, bool) {
     }
 }
 
+/// What the CLI prints when the account's only two-step methods are ones it
+/// cannot use: a security key or passkey (FIDO2), or Duo.
+const NO_PROVIDERS: &str = "No providers available for this client.";
+
+/// Why `bw login` failed, from the terminal's text once the CLI exits: the
+/// CLI's error is its last line. None when the user stopped the CLI at a
+/// prompt or chose Cancel.
+fn failure_reason(text: &str) -> Option<String> {
+    let mut lines = text.lines().map(str::trim).filter(|l| !l.is_empty()).rev();
+    let Some(last) = lines.next() else {
+        return Some("The Bitwarden CLI stopped before it could sign in.".into());
+    };
+    // The CLI's prompts start with "?", answered ones too.
+    if last.starts_with('?') {
+        return None;
+    }
+    if last == "Login failed." && lines.next().is_some_and(|l| l.starts_with('?') && l.ends_with(": Cancel"))
+    {
+        return None;
+    }
+    if last == NO_PROVIDERS {
+        return Some(
+            "The Bitwarden CLI can't use your account's two-step login: it doesn't support security keys, passkeys or Duo. Use an API key instead, or add an authenticator app or email codes in the Bitwarden web vault."
+                .into(),
+        );
+    }
+    Some(last.to_owned())
+}
+
 /// Shows `message` under the dialog's title for a few seconds.
 fn flash(title: &adw::WindowTitle, message: &str) {
     title.set_subtitle(message);
@@ -266,7 +302,7 @@ const VTE_SPAWN_NO_PARENT_ENVV: u32 = 1 << 25;
 
 #[cfg(test)]
 mod tests {
-    use super::first_line;
+    use super::{failure_reason, first_line};
 
     #[test]
     fn pastes_one_line_without_its_line_break() {
@@ -277,5 +313,30 @@ mod tests {
         assert_eq!(first_line("\r\n\nsecret\n"), ("secret", false));
         assert_eq!(first_line("\n\n"), ("", false));
         assert_eq!(first_line(""), ("", false));
+    }
+
+    #[test]
+    fn reports_the_clis_error() {
+        let wrong = "? Email address: alex@example.com\n? Master password: [hidden]\nInvalid master password. Confirm your email is correct and your account was created on vault.bitwarden.com.\n\n";
+        assert_eq!(
+            failure_reason(wrong).as_deref(),
+            Some(
+                "Invalid master password. Confirm your email is correct and your account was created on vault.bitwarden.com."
+            )
+        );
+        let unsupported = "? Email address: alex@example.com\n? Master password: [hidden]\nNo providers available for this client.\n";
+        let reason = failure_reason(unsupported).unwrap();
+        assert!(reason.contains("security keys, passkeys or Duo"), "{reason}");
+        assert!(reason.contains("API key"), "{reason}");
+        assert!(failure_reason("\n  \n").is_some());
+    }
+
+    #[test]
+    fn says_nothing_when_the_user_stopped_it() {
+        assert_eq!(failure_reason("? Email address: alex@example.com\n? Master password: "), None);
+        let cancel = "? Master password: [hidden]\n? Two-step login method: Cancel\nLogin failed.\n";
+        assert_eq!(failure_reason(cancel), None);
+        let rejected = "? Two-step login code: 123456\nLogin failed.\n";
+        assert_eq!(failure_reason(rejected).as_deref(), Some("Login failed."));
     }
 }

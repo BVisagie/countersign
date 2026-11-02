@@ -11,7 +11,10 @@
      password and two-step code, in a terminal inside Countersign. When it
      succeeds, the vault opens without typing the password again. You can
      paste your password there with **Ctrl+V** or the paste button; a
-     paste never presses Enter for you.
+     paste never presses Enter for you. The CLI's two-step login works
+     with an authenticator app, email codes or a YubiKey OTP. It can't use
+     a security key, passkey or Duo: if those are your account's only
+     two-step methods, use an API key.
    - **Use an API key.** Enter the personal API key from the Bitwarden web
      vault (**Settings → Security → Keys**). You still unlock with your
      master password.
