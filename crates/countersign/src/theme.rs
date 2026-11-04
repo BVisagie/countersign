@@ -87,6 +87,14 @@ const MIN_TEXT_CONTRAST: f32 = 4.5;
 const CARD_ALPHA: f32 = 0.035;
 const HOVER_ALPHA: f32 = 0.07;
 
+/// Every background secondary text can sit on: each base surface, with and
+/// without the hover tint, and the window under a card's tint.
+fn text_surfaces(fg: Rgb, bases: [Rgb; 4]) -> Vec<Rgb> {
+    let mut surfaces: Vec<Rgb> = bases.iter().flat_map(|&b| [b, b.mix(fg, HOVER_ALPHA)]).collect();
+    surfaces.push(bases[0].mix(fg, CARD_ALPHA));
+    surfaces
+}
+
 /// The colors Countersign uses from an Omarchy theme.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Palette {
@@ -122,8 +130,9 @@ impl Palette {
         let bg_darker = get("darker_background").unwrap_or_else(|| bg.mix(toward, 0.24));
         let bg_lighter = get("lighter_background").unwrap_or_else(|| bg.mix(away, 0.08));
         // Secondary text sits on the window, the list, the sidebar and
-        // popovers, and on the window's tinted cards and chips.
-        let surfaces = [bg, bg_dark, bg_darker, bg_lighter, bg.mix(fg, CARD_ALPHA), bg.mix(fg, HOVER_ALPHA)];
+        // popovers, on each of them under a hovered row's tint, and on the
+        // window's tinted cards and chips.
+        let surfaces = text_surfaces(fg, [bg, bg_dark, bg_darker, bg_lighter]);
         let selection = get("selection").unwrap_or_else(|| accent.mix(bg, 0.55));
         // `selection_foreground` belongs with a terminal's bright
         // `selection_background`, not with `selection`: on the subtle
@@ -370,16 +379,21 @@ selection_background = "#c8c8c8"
     #[test]
     fn secondary_text_reads_on_every_surface() {
         // Tokyo Night's and Rosé Pine's muted colors are about 2:1 and 1.5:1;
-        // Last Horizon's popover is its window, and its cards are tinted.
+        // Last Horizon's cards are tinted; Catppuccin Latte's sidebar rows
+        // are tinted when hovered.
         for theme in [
+            "mode = \"light\"\naccent = \"#1e66f5\"\nselection = \"#ccd0da\"\nmuted = \"#acb0be\"\nbackground = \"#eff1f5\"\ndark_background = \"#e3e4e8\"\ndarker_background = \"#d7d8dc\"\nlighter_background = \"#dce0e8\"\nforeground = \"#4c4f69\"\ndark_foreground = \"#9ca0b0\"\n",
             "mode = \"dark\"\naccent = \"#7aa2f7\"\nbackground = \"#1a1b26\"\nforeground = \"#a9b1d6\"\nmuted = \"#414868\"\ndark_foreground = \"#565f89\"\n",
             "mode = \"dark\"\naccent = \"#b59790\"\nselection = \"#584e51\"\nmuted = \"#584e51\"\nbackground = \"#0c0b0c\"\ndark_background = \"#090809\"\ndarker_background = \"#060606\"\nlighter_background = \"#0c0b0c\"\nforeground = \"#FAFCFB\"\ndark_foreground = \"#584e51\"\n",
             "mode = \"light\"\naccent = \"#56949f\"\nbackground = \"#faf4ed\"\nforeground = \"#575279\"\nmuted = \"#dfdad9\"\n",
         ] {
             let p = Palette::from_toml(theme).unwrap();
+            // Listed here, not taken from `text_surfaces`, so the test
+            // checks that function rather than repeating it.
+            let bases = [p.bg, p.bg_dark, p.bg_darker, p.bg_lighter];
+            let hovered = bases.map(|b| b.mix(p.fg, HOVER_ALPHA));
             let card = p.bg.mix(p.fg, CARD_ALPHA);
-            let chip = p.bg.mix(p.fg, HOVER_ALPHA);
-            for surface in [p.bg, p.bg_dark, p.bg_darker, p.bg_lighter, card, chip] {
+            for surface in bases.into_iter().chain(hovered).chain([card]) {
                 assert!(p.muted.contrast(surface) >= MIN_TEXT_CONTRAST, "{theme}");
                 assert!(p.fg_dim.contrast(surface) >= MIN_TEXT_CONTRAST, "{theme}");
             }
