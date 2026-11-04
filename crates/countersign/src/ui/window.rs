@@ -623,7 +623,11 @@ impl MainWindow {
                 }
             }
         });
-        action("generator", |me| me.show_vault_filter(Filter::Generator));
+        action("generator", |me| {
+            me.show_vault_filter(Filter::Generator);
+            // Already selected after a lock, so no selection change refills it.
+            me.generator.ensure_value();
+        });
         action("sends", |me| me.show_vault_filter(Filter::Sends));
         action("focus-search", |me| {
             // Searching means the vault: leave the generator for it first.
@@ -798,7 +802,10 @@ impl MainWindow {
                             me.detail.cancel_edit();
                             return glib::Propagation::Stop;
                         }
-                        gdk::Key::s | gdk::Key::S if ctrl => {
+                        // Not Ctrl+Shift+S, which opens Send.
+                        gdk::Key::s | gdk::Key::S
+                            if ctrl && !state.contains(gdk::ModifierType::SHIFT_MASK) =>
+                        {
                             me.detail.save_edit();
                             return glib::Propagation::Stop;
                         }
@@ -1399,7 +1406,12 @@ impl View for MainWindow {
         if page == "vault" && previous.as_deref() != Some("vault") {
             // Focus what is shown: the search, unless a tool page is.
             match self.content.visible_child_name().as_deref() {
-                Some("generator") => self.generator.focus(),
+                // A lock cleared the generator, and its pinned row is still
+                // selected, so no selection change will refill it.
+                Some("generator") => {
+                    self.generator.ensure_value();
+                    self.generator.focus();
+                }
                 Some("sends") => self.sends.focus(),
                 _ => {
                     self.search.grab_focus();
