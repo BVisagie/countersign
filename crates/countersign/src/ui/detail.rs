@@ -16,7 +16,8 @@ use serde_json::Value;
 use super::{clear, icon_button, label, monogram, relative_time, short_date};
 use crate::app::App;
 
-const MASK: &str = "••••••••••••";
+/// The same dots as GTK's password entries, so the editor matches.
+const MASK: &str = "●●●●●●●●●●●●";
 const REVEAL_FOR: Duration = Duration::from_secs(60);
 const COPIED_FOR: Duration = Duration::from_millis(1500);
 
@@ -443,7 +444,7 @@ impl Detail {
         row.add_css_class("cs-field");
         let text = gtk::Box::new(gtk::Orientation::Vertical, 3);
         text.set_hexpand(true);
-        text.append(&label(&title.to_uppercase(), &["cs-field-label"]));
+        text.append(&label(title, &["cs-field-label"]));
         text.append(value);
         row.append(&text);
         let buttons = gtk::Box::new(gtk::Orientation::Horizontal, 2);
@@ -529,7 +530,7 @@ impl Detail {
     }
 
     fn totp_field(self: &Rc<Self>, id: &str) -> gtk::Box {
-        let code = label("••• •••", &["cs-field-value", "code"]);
+        let code = label("●●● ●●●", &["cs-field-value", "code"]);
         let (row, buttons) = self.row("Verification code", code.upcast_ref());
         let countdown = gtk::Label::new(None);
         countdown.add_css_class("cs-meta");

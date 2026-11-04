@@ -106,11 +106,8 @@ listview.cs-items > row:selected .cs-item-subtitle { color: var(--cs-selection-f
 }
 .cs-field { padding: 9px 12px; border-bottom: 1px solid var(--cs-line); }
 .cs-field:last-child { border-bottom: none; }
-.cs-field-label {
-  font-size: 0.72em; font-weight: 700; letter-spacing: 0.1em; color: var(--cs-muted);
-}
+.cs-field-label { font-size: 0.82em; color: var(--cs-muted); }
 .cs-field-value { font-size: 1em; }
-.cs-field-value.secret { letter-spacing: 0.12em; }
 .cs-field-value.code { font-size: 1.35em; font-weight: 700; letter-spacing: 0.08em; color: var(--accent-color); }
 .cs-field button.flat { min-width: 28px; min-height: 28px; padding: 0; color: var(--cs-dim); }
 .cs-field button.flat:hover { color: var(--window-fg-color); background-color: var(--cs-hover); }
