@@ -34,7 +34,7 @@ tracing-subscriber.workspace = true
 wl-clipboard-rs = "0.9.5"
 zbus = { version = "5", default-features = false, features = ["tokio"] }
 zeroize.workspace = true
-zip = { version = "9.2.0", default-features = false, features = ["deflate"] }
+zip = { version = "9.3.0", default-features = false, features = ["deflate"] }
 
 [dev-dependencies]
 
