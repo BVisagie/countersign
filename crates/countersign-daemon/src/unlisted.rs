@@ -2,8 +2,9 @@
 //!
 //! `bw serve` 2026.10.1 often answers a list from before the latest change:
 //! an edited item keeps its old name, a renamed folder its old name, a new
-//! item or folder is missing. The list stays behind until a later change or
-//! a sync. So the daemon keeps what each change left and lays it over every
+//! item or folder is missing. Folders catch up within seconds; items stay
+//! behind until a later change or a sync (bitwarden/clients#24432). So the
+//! daemon keeps what each change left and lays it over every
 //! list until the list shows it, or until a sync that started after the
 //! change has finished. Changes from elsewhere arrive only through a sync,
 //! so after one the CLI's lists are the truth again.

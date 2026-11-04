@@ -52,8 +52,10 @@ when a call on an object the index knows finds nothing.
 
 `bw serve` 2026.10.1 also often lists items and folders as they were before
 the latest change: an edited item keeps its old name, a renamed folder its
-old name, a new one is missing. The list stays behind until a later change
-or a sync, and reading an item back can be behind for a moment too. So the
+old name, a new one is missing. Folders catch up within seconds; items stay
+behind until a later change or a sync
+([bitwarden/clients#24432](https://github.com/bitwarden/clients/issues/24432)).
+Reading an item back can be behind for a moment too. So the
 daemon keeps what each change left, from the change's reply or, for the
 trash and attachments, from what it knew already, and lays it over every
 list until the list shows it. Changes from other devices arrive only
