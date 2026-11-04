@@ -355,8 +355,11 @@ impl Daemon {
 
     // ----- Unlocking and locking ---------------------------------------
 
-    /// Starts the CLI so an unlock does not wait for it.
+    /// Starts the CLI so an unlock does not wait for it. Runs under `ops`,
+    /// so it never starts a CLI that an install or a change of CLI is
+    /// replacing.
     pub async fn prepare_unlock(&self) -> Result<(), IpcError> {
+        let _op = self.ops.lock().await;
         if self.status().vault != VaultState::Locked {
             return Ok(());
         }
@@ -1045,5 +1048,36 @@ esac
         daemon.lock_within_op(LockReason::Requested).await;
         assert!(started.elapsed() < Duration::from_secs(1));
         assert_eq!(daemon.status().vault, VaultState::Locked);
+    }
+
+    /// The locked page asks for a CLI as soon as an install locks the
+    /// vault. It waits for the install to switch CLIs and starts the new
+    /// one, never the copy being replaced.
+    #[tokio::test]
+    async fn preparing_waits_for_a_cli_switch() {
+        use std::os::unix::fs::PermissionsExt;
+        let (daemon, root) = daemon();
+        let fake = |name: &str| {
+            let bw = root.path().join(name);
+            let log = root.path().join("started");
+            std::fs::write(&bw, format!("#!/bin/sh\necho {name} >> {}\n", log.display())).unwrap();
+            std::fs::set_permissions(&bw, std::fs::Permissions::from_mode(0o700)).unwrap();
+            Cli::new(&bw, root.path().join("profile"))
+        };
+        *daemon.cli.lock().unwrap() = Some(fake("old"));
+        daemon.update_status(|s| s.vault = VaultState::Locked);
+
+        let op = daemon.ops.lock().await;
+        let preparing = tokio::spawn({
+            let daemon = daemon.clone();
+            async move { daemon.prepare_unlock().await }
+        });
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        *daemon.cli.lock().unwrap() = Some(fake("new"));
+        drop(op);
+        // The fake CLI exits at once, so starting it fails; only which one
+        // started matters.
+        let _ = preparing.await.unwrap();
+        assert_eq!(std::fs::read_to_string(root.path().join("started")).unwrap(), "new\n");
     }
 }
