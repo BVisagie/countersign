@@ -17,7 +17,7 @@ use countersign_bw::{
 };
 use countersign_ipc::{
     Account, CliState, ClipboardEvent, ClipboardState, Collection, ErrorCode, Event, Folder, IpcError,
-    Organization, Settings, Status, VaultSnapshot, VaultState, summarize,
+    ItemSummary, Organization, Settings, Status, VaultSnapshot, VaultState, summarize,
 };
 use secrecy::SecretString;
 use serde_json::Value;
@@ -26,6 +26,7 @@ use tokio::task::JoinHandle;
 
 use crate::clipboard::Clipboard;
 use crate::paths::{Paths, ensure_private_dir};
+use crate::unlisted::{Known, Unlisted};
 
 /// How long a re-prompted item stays available without asking again.
 const REPROMPT_GRANT: Duration = Duration::from_secs(300);
@@ -113,6 +114,8 @@ pub struct Daemon {
     prepared: Mutex<Option<(Serve, Instant)>>,
     epoch: Arc<AtomicU64>,
     vault: Mutex<Arc<VaultSnapshot>>,
+    /// Changes the CLI's lists may not show yet; see `unlisted`.
+    unlisted: Mutex<Unlisted>,
     pub(crate) clipboard: Arc<Clipboard>,
     pub(crate) copy_timers: Mutex<CopyTimers>,
     /// Orders clipboard events: a copy announces itself, and a timer checks
@@ -149,6 +152,7 @@ impl Daemon {
             prepared: Mutex::new(None),
             epoch: Arc::new(AtomicU64::new(0)),
             vault: Mutex::new(Arc::new(VaultSnapshot::default())),
+            unlisted: Mutex::new(Unlisted::default()),
             clipboard: Arc::new(Clipboard::default()),
             copy_timers: Mutex::new(CopyTimers::default()),
             clipboard_events: Mutex::new(()),
@@ -587,6 +591,7 @@ impl Daemon {
             self.epoch.fetch_add(1, Ordering::SeqCst);
             self.grants.lock().expect("grants").clear();
             *self.vault.lock().expect("vault") = Arc::new(VaultSnapshot::default());
+            *self.unlisted.lock().expect("unlisted") = Unlisted::default();
             self.update_status(|s| {
                 if matches!(s.vault, VaultState::Unlocked | VaultState::Unlocking) {
                     s.vault = VaultState::Locked;
@@ -801,6 +806,7 @@ impl Daemon {
         };
         drop(items);
         drop(trash);
+        self.unlisted.lock().expect("unlisted").apply(&mut snapshot);
         let by_name = |a: &String, b: &String| a.to_lowercase().cmp(&b.to_lowercase());
         snapshot.items.sort_by(|a, b| by_name(&a.name, &b.name));
         snapshot.trash.sort_by(|a, b| by_name(&a.name, &b.name));
@@ -815,13 +821,56 @@ impl Daemon {
         Ok(())
     }
 
+    /// Runs a CLI call on an object the index knows, asking again for up to
+    /// two seconds while the CLI answers "not found": `bw serve` can for a
+    /// moment not find an item or folder it has just created. A call that
+    /// found nothing changed nothing, so asking again is safe.
+    pub(crate) async fn on_known<T, F>(&self, known: bool, mut call: impl FnMut() -> F) -> Result<T, BwError>
+    where
+        F: std::future::Future<Output = Result<T, BwError>>,
+    {
+        let mut attempts = 0;
+        loop {
+            match call().await {
+                Err(BwError::NotFound) if known && attempts < 20 => {
+                    attempts += 1;
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                }
+                result => return result,
+            }
+        }
+    }
+
+    pub(crate) async fn read_item(&self, client: &ServeClient, id: &str) -> Result<Value, BwError> {
+        self.on_known(self.knows_item(id), || client.get_item(id)).await
+    }
+
+    /// The index's entry for an item, changed as a change left it.
+    fn indexed(&self, id: &str, change: impl FnOnce(&mut ItemSummary)) -> Option<Known> {
+        let vault = self.vault.lock().expect("vault").clone();
+        let mut item = vault.items.iter().chain(&vault.trash).find(|i| i.id == id)?.clone();
+        change(&mut item);
+        Some(Known::Item(item.id.clone(), Some(item)))
+    }
+
+    pub(crate) fn knows_item(&self, id: &str) -> bool {
+        let vault = self.vault.lock().expect("vault").clone();
+        vault.items.iter().chain(&vault.trash).any(|i| i.id == id)
+    }
+
+    pub(crate) fn knows_folder(&self, id: &str) -> bool {
+        self.vault.lock().expect("vault").folders.iter().any(|f| f.id == id)
+    }
+
     /// Syncs with the server and rebuilds the index.
     pub async fn sync(&self) -> Result<(), IpcError> {
         let client = self.client().await?;
         let epoch = self.epoch();
         self.update_status(|s| s.syncing = true);
+        let mark = self.unlisted.lock().expect("unlisted").mark();
         let result = async {
             client.sync().await?;
+            self.unlisted.lock().expect("unlisted").forget_folders_before(mark);
             self.rebuild(&client, epoch).await?;
             client.status().await
         }
@@ -845,14 +894,57 @@ impl Daemon {
         }
     }
 
-    /// Rebuilds the index after a change and tells the app.
-    pub(crate) async fn changed(&self, client: &ServeClient) {
+    /// Rebuilds the index after a change and tells the app. What the change
+    /// left is kept for the index first, because the CLI's lists can be
+    /// behind; see `unlisted`.
+    pub(crate) async fn changed(&self, client: &ServeClient, change: Change<'_>) {
         let epoch = self.epoch();
+        let known = match change {
+            Change::Item(item) => {
+                summarize(item).map(|summary| Known::Item(summary.id.clone(), Some(summary)))
+            }
+            // Reading the item back can be behind too, so these follow from
+            // the index.
+            Change::Trashed(id) => self.indexed(&id, |i| i.deleted = true),
+            Change::Restored(id) => self.indexed(&id, |i| i.deleted = false),
+            Change::AttachmentDeleted(id) => {
+                self.indexed(&id, |i| i.attachments = i.attachments.saturating_sub(1))
+            }
+            Change::Deleted(id) => Some(Known::Item(id, None)),
+            Change::Folder(id, folder) => {
+                let folder = folder.and_then(|f| {
+                    Some(Folder { id: f["id"].as_str()?.to_owned(), name: f["name"].as_str()?.to_owned() })
+                });
+                Some(Known::Folder(id, folder))
+            }
+        };
+        if let Some(known) = known {
+            let _slot = self.session.lock().expect("session");
+            if self.epoch() == epoch {
+                self.unlisted.lock().expect("unlisted").record(known);
+            }
+        }
         if let Err(e) = self.rebuild(client, epoch).await {
             tracing::warn!("refreshing the vault index failed: {e}");
         }
         self.emit(Event::VaultChanged);
     }
+}
+
+/// What a change left behind, for the index; see `unlisted`.
+pub(crate) enum Change<'a> {
+    /// An item as the change returned it.
+    Item(&'a Value),
+    /// An item moved to the trash.
+    Trashed(String),
+    /// An item restored from the trash.
+    Restored(String),
+    /// An item that lost one attachment.
+    AttachmentDeleted(String),
+    /// An item deleted for good.
+    Deleted(String),
+    /// A folder as the change returned it, or `None` once deleted.
+    Folder(String, Option<&'a Value>),
 }
 
 /// The pinned release, when Countersign installed `version` itself, it is
