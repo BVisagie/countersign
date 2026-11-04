@@ -358,7 +358,7 @@ impl Quick {
         let (me, id) = (self.clone(), item.id.clone());
         glib::spawn_future_local(async move {
             match me.app.copy(me.panel.upcast_ref(), &id, field).await {
-                Ok(()) => me.hide(),
+                Ok(_) => me.hide(),
                 Err(e) => me.count.set_label(&e.message),
             }
         });

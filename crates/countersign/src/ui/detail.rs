@@ -18,6 +18,7 @@ use crate::app::App;
 
 const MASK: &str = "••••••••••••";
 const REVEAL_FOR: Duration = Duration::from_secs(60);
+const COPIED_FOR: Duration = Duration::from_millis(1500);
 
 pub struct Detail {
     pub root: gtk::Stack,
@@ -686,12 +687,26 @@ impl Detail {
             let Some(me) = me.upgrade() else { return };
             let (button, id, field) = (button.clone(), id.clone(), field.clone());
             glib::spawn_future_local(async move {
-                if let Err(e) = me.app.copy(button.upcast_ref(), &id, field).await {
-                    (me.notify)(&e.message);
+                match me.app.copy(button.upcast_ref(), &id, field).await {
+                    Ok(true) => confirm_copy(&button),
+                    Ok(false) => {}
+                    Err(e) => (me.notify)(&e.message),
                 }
             });
         });
     }
+}
+
+/// Shows a check on a copy button for a moment, where the click was; the
+/// receipt bar has the details.
+fn confirm_copy(button: &gtk::Button) {
+    button.set_icon_name("object-select-symbolic");
+    let weak = button.downgrade();
+    glib::timeout_add_local_once(COPIED_FOR, move || {
+        if let Some(button) = weak.upgrade() {
+            button.set_icon_name("edit-copy-symbolic");
+        }
+    });
 }
 
 /// A web address safe to hand to the browser, adding `https://` when the
