@@ -164,6 +164,7 @@ window.cs-quick-window { background: transparent; }
   border: 1px solid var(--cs-line-strong); color: var(--cs-dim);
 }
 .cs-quick-locked { padding: 18px; }
+.cs-quick-error > label { padding: 8px 16px; border-top: 1px solid var(--cs-line); }
 
 /* ---------- Receipts ---------- */
 

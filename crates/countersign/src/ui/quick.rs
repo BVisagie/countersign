@@ -52,6 +52,8 @@ pub struct Quick {
     unlock: Rc<Unlock>,
     other_text: gtk::Label,
     count: gtk::Label,
+    error: gtk::Label,
+    error_bar: gtk::Revealer,
     items: RefCell<Vec<Rc<ItemSummary>>>,
     searcher: RefCell<Searcher>,
 }
@@ -121,9 +123,19 @@ impl Quick {
         footer.append(&spacer);
         footer.append(&keycap("Esc"));
 
+        // Why a copy failed, such as a code that needs Premium.
+        let error = label("", &["cs-error"]);
+        error.set_wrap(true);
+        let error_bar = gtk::Revealer::builder()
+            .transition_type(gtk::RevealerTransitionType::SlideUp)
+            .child(&error)
+            .css_classes(["cs-quick-error"])
+            .build();
+
         let vault_page = gtk::Box::new(gtk::Orientation::Vertical, 0);
         vault_page.append(&search_row);
         vault_page.append(&results);
+        vault_page.append(&error_bar);
         vault_page.append(&footer);
 
         let unlock = Unlock::new(app, true);
@@ -171,6 +183,8 @@ impl Quick {
             unlock,
             other_text,
             count,
+            error,
+            error_bar,
             items: RefCell::default(),
             searcher: RefCell::default(),
         });
@@ -318,6 +332,7 @@ impl Quick {
         let order = self.searcher.borrow_mut().rank(&refs, &query, &recent);
         let shown: Vec<Rc<ItemSummary>> = order.iter().take(200).map(|&i| items[i].clone()).collect();
         drop(items);
+        self.error_bar.set_reveal_child(false);
         self.count.set_label(&if query.trim().is_empty() {
             String::new()
         } else {
@@ -359,7 +374,10 @@ impl Quick {
         glib::spawn_future_local(async move {
             match me.app.copy(me.panel.upcast_ref(), &id, field).await {
                 Ok(_) => me.hide(),
-                Err(e) => me.count.set_label(&e.message),
+                Err(e) => {
+                    me.error.set_label(&e.message);
+                    me.error_bar.set_reveal_child(true);
+                }
             }
         });
     }
