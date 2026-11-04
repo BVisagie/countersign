@@ -54,6 +54,45 @@ impl Rgb {
         let m = |a: u8, b: u8| (f32::from(a) + (f32::from(b) - f32::from(a)) * t).round() as u8;
         Rgb(m(self.0, other.0), m(self.1, other.1), m(self.2, other.2))
     }
+
+    /// Relative luminance, as WCAG defines it.
+    fn luminance(self) -> f32 {
+        let channel = |c: u8| {
+            let c = f32::from(c) / 255.0;
+            if c <= 0.039_28 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) }
+        };
+        0.2126 * channel(self.0) + 0.7152 * channel(self.1) + 0.0722 * channel(self.2)
+    }
+
+    /// The WCAG contrast ratio between two colors, from 1 to 21.
+    fn contrast(self, other: Rgb) -> f32 {
+        let (a, b) = (self.luminance(), other.luminance());
+        (a.max(b) + 0.05) / (a.min(b) + 0.05)
+    }
+
+    /// This color, moved toward `toward` until it reads as text on every
+    /// background: Omarchy's muted colors are made for code comments, and
+    /// most themes' are too faint for labels.
+    fn readable_on(self, backgrounds: &[Rgb], toward: Rgb) -> Rgb {
+        (0..=20)
+            .map(|step| self.mix(toward, step as f32 / 20.0))
+            .find(|c| backgrounds.iter().all(|bg| c.contrast(*bg) >= MIN_TEXT_CONTRAST))
+            .unwrap_or(toward)
+    }
+}
+
+/// WCAG's minimum contrast for body text.
+const MIN_TEXT_CONTRAST: f32 = 4.5;
+/// The foreground's share in the tint of cards, and of chips and hovers.
+const CARD_ALPHA: f32 = 0.035;
+const HOVER_ALPHA: f32 = 0.07;
+
+/// Every background secondary text can sit on: each base surface, with and
+/// without the hover tint, and the window under a card's tint.
+fn text_surfaces(fg: Rgb, bases: [Rgb; 4]) -> Vec<Rgb> {
+    let mut surfaces: Vec<Rgb> = bases.iter().flat_map(|&b| [b, b.mix(fg, HOVER_ALPHA)]).collect();
+    surfaces.push(bases[0].mix(fg, CARD_ALPHA));
+    surfaces
 }
 
 /// The colors Countersign uses from an Omarchy theme.
@@ -88,18 +127,31 @@ impl Palette {
         let toward = if dark { Rgb(0, 0, 0) } else { Rgb(255, 255, 255) };
         let away = if dark { Rgb(255, 255, 255) } else { Rgb(0, 0, 0) };
         let bg_dark = get("dark_background").unwrap_or_else(|| bg.mix(toward, 0.12));
+        let bg_darker = get("darker_background").unwrap_or_else(|| bg.mix(toward, 0.24));
+        let bg_lighter = get("lighter_background").unwrap_or_else(|| bg.mix(away, 0.08));
+        // Secondary text sits on the window, the list, the sidebar and
+        // popovers, on each of them under a hovered row's tint, and on the
+        // window's tinted cards and chips.
+        let surfaces = text_surfaces(fg, [bg, bg_dark, bg_darker, bg_lighter]);
+        let selection = get("selection").unwrap_or_else(|| accent.mix(bg, 0.55));
+        // `selection_foreground` belongs with a terminal's bright
+        // `selection_background`, not with `selection`: on the subtle
+        // `selection` it can be unreadable. Use it only when it reads there.
+        let selection_fg = get("selection_foreground")
+            .filter(|c| c.contrast(selection) >= MIN_TEXT_CONTRAST)
+            .unwrap_or_else(|| fg.readable_on(&[selection], away));
         Some(Palette {
             dark,
             bg,
             bg_dark,
-            bg_darker: get("darker_background").unwrap_or_else(|| bg.mix(toward, 0.24)),
-            bg_lighter: get("lighter_background").unwrap_or_else(|| bg.mix(away, 0.08)),
+            bg_darker,
+            bg_lighter,
             fg,
-            fg_dim: get("dark_foreground").unwrap_or_else(|| fg.mix(bg, 0.25)),
-            muted: get("muted").unwrap_or_else(|| fg.mix(bg, 0.45)),
+            fg_dim: get("dark_foreground").unwrap_or_else(|| fg.mix(bg, 0.25)).readable_on(&surfaces, fg),
+            muted: get("muted").unwrap_or_else(|| fg.mix(bg, 0.45)).readable_on(&surfaces, fg),
             accent,
-            selection: get("selection").unwrap_or_else(|| accent.mix(bg, 0.55)),
-            selection_fg: get("selection_foreground").unwrap_or(fg),
+            selection,
+            selection_fg,
             border: get("hyprland_active_border").unwrap_or(accent),
             red: get("red").unwrap_or(Rgb(0xe0, 0x6c, 0x75)),
             green: get("green").unwrap_or(Rgb(0x98, 0xc3, 0x79)),
@@ -166,10 +218,10 @@ window, popover, dialog, tooltip {{ font-family: monospace; }}
             selection = self.selection.hex(),
             selection_fg = self.selection_fg.hex(),
             frame = self.border.hex(),
-            card = self.fg.alpha(0.035),
+            card = self.fg.alpha(CARD_ALPHA),
             line = self.fg.alpha(0.12),
             line_strong = self.fg.alpha(0.28),
-            hover = self.fg.alpha(0.07),
+            hover = self.fg.alpha(HOVER_ALPHA),
             shadow = Rgb(0, 0, 0).alpha(if self.dark { 0.45 } else { 0.18 }),
             small = radius.min(6),
         );
@@ -298,5 +350,60 @@ red = "#ff8e7c"
         assert!(css.contains("--cs-radius: 0px"));
         assert!(Palette::from_toml("background = \"#19}3e58\"\nforeground = \"#fff\"").is_none());
         assert!(Palette::from_toml("background = \"red; } * { x\"").is_none());
+    }
+
+    #[test]
+    fn a_terminal_selection_foreground_is_not_put_on_the_subtle_selection() {
+        // A theme carrying a terminal's selection pair, dark text for a light
+        // `selection_background`, next to a dark `selection`.
+        let palette = Palette::from_toml(
+            r##"mode = "dark"
+accent = "#7c7ca8"
+background = "#13131D"
+foreground = "#c8c8c8"
+selection = "#2c293f"
+selection_foreground = "#13131D"
+selection_background = "#c8c8c8"
+"##,
+        )
+        .unwrap();
+        assert_eq!(palette.selection_fg, palette.fg);
+        // A selection foreground that reads on the selection is kept.
+        let palette = Palette::from_toml(
+            "accent = \"#7c7ca8\"\nbackground = \"#13131D\"\nforeground = \"#c8c8c8\"\nselection = \"#2c293f\"\nselection_foreground = \"#ffffff\"\n",
+        )
+        .unwrap();
+        assert_eq!(palette.selection_fg, Rgb(255, 255, 255));
+    }
+
+    #[test]
+    fn secondary_text_reads_on_every_surface() {
+        // Tokyo Night's and Rosé Pine's muted colors are about 2:1 and 1.5:1;
+        // Last Horizon's cards are tinted; Catppuccin Latte's sidebar rows
+        // are tinted when hovered.
+        for theme in [
+            "mode = \"light\"\naccent = \"#1e66f5\"\nselection = \"#ccd0da\"\nmuted = \"#acb0be\"\nbackground = \"#eff1f5\"\ndark_background = \"#e3e4e8\"\ndarker_background = \"#d7d8dc\"\nlighter_background = \"#dce0e8\"\nforeground = \"#4c4f69\"\ndark_foreground = \"#9ca0b0\"\n",
+            "mode = \"dark\"\naccent = \"#7aa2f7\"\nbackground = \"#1a1b26\"\nforeground = \"#a9b1d6\"\nmuted = \"#414868\"\ndark_foreground = \"#565f89\"\n",
+            "mode = \"dark\"\naccent = \"#b59790\"\nselection = \"#584e51\"\nmuted = \"#584e51\"\nbackground = \"#0c0b0c\"\ndark_background = \"#090809\"\ndarker_background = \"#060606\"\nlighter_background = \"#0c0b0c\"\nforeground = \"#FAFCFB\"\ndark_foreground = \"#584e51\"\n",
+            "mode = \"light\"\naccent = \"#56949f\"\nbackground = \"#faf4ed\"\nforeground = \"#575279\"\nmuted = \"#dfdad9\"\n",
+        ] {
+            let p = Palette::from_toml(theme).unwrap();
+            // Listed here, not taken from `text_surfaces`, so the test
+            // checks that function rather than repeating it.
+            let bases = [p.bg, p.bg_dark, p.bg_darker, p.bg_lighter];
+            let hovered = bases.map(|b| b.mix(p.fg, HOVER_ALPHA));
+            let card = p.bg.mix(p.fg, CARD_ALPHA);
+            for surface in bases.into_iter().chain(hovered).chain([card]) {
+                assert!(p.muted.contrast(surface) >= MIN_TEXT_CONTRAST, "{theme}");
+                assert!(p.fg_dim.contrast(surface) >= MIN_TEXT_CONTRAST, "{theme}");
+            }
+            assert!(p.selection_fg.contrast(p.selection) >= MIN_TEXT_CONTRAST, "{theme}");
+        }
+        // A muted color that already reads is left as it is.
+        let p = Palette::from_toml(
+            "background = \"#13131D\"\nforeground = \"#e0e0e0\"\nmuted = \"#a09cb0\"\naccent = \"#7c7ca8\"\n",
+        )
+        .unwrap();
+        assert_eq!(p.muted, Rgb(0xa0, 0x9c, 0xb0));
     }
 }

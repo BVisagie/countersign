@@ -90,6 +90,11 @@ impl Detail {
         self.current.borrow().clone()
     }
 
+    /// Whether the shown item can be edited: one is shown, not in the trash.
+    pub fn can_edit(&self) -> bool {
+        self.current.borrow().is_some() && self.edit_button.is_sensitive()
+    }
+
     /// Opens the editor for the shown item.
     pub fn edit(self: &Rc<Self>) {
         let Some(id) = self.current_id() else { return };
@@ -136,8 +141,12 @@ impl Detail {
         self.invalidate();
         self.root.add_named(&editor.root, Some("edit"));
         self.root.set_visible_child_name("edit");
-        // The editor has its own Cancel and Save.
+        // The editor's Cancel and Save take the place of the item's buttons.
         self.actions.set_visible(false);
+        self.header_start.append(&editor.cancel);
+        self.header_end.append(&editor.save);
+        self.header_title.set_label(editor.heading);
+        self.header_title.set_visible(true);
         if let Some(window) = super::window::current() {
             window.set_editing(true);
         }
@@ -145,10 +154,29 @@ impl Detail {
         *self.editor.borrow_mut() = Some(editor);
     }
 
+    /// Cancels the open editor, asking first if anything changed.
+    pub fn cancel_edit(&self) {
+        let editor = self.editor.borrow().clone();
+        if let Some(editor) = editor {
+            editor.cancel();
+        }
+    }
+
+    /// Saves the open editor.
+    pub fn save_edit(&self) {
+        let editor = self.editor.borrow().clone();
+        if let Some(editor) = editor {
+            editor.save();
+        }
+    }
+
     /// Leaves the editor, discarding unsaved changes.
     pub(super) fn close_editor(&self) {
         let Some(editor) = self.editor.borrow_mut().take() else { return };
         self.root.remove(&editor.root);
+        super::clear(&self.header_start);
+        super::clear(&self.header_end);
+        self.header_title.set_visible(false);
         self.actions.set_visible(true);
         if let Some(window) = super::window::current() {
             window.set_editing(false);
@@ -166,7 +194,7 @@ impl Detail {
     }
 
     /// Done in the daemon, so the item's secrets never reach the app.
-    fn toggle_favorite(self: &Rc<Self>) {
+    pub(super) fn toggle_favorite(self: &Rc<Self>) {
         let Some(id) = self.current_id() else { return };
         let favorite = !self.vault.borrow().items.iter().any(|i| i.id == id && i.favorite);
         let me = self.clone();
@@ -182,9 +210,30 @@ impl Detail {
     }
 
     fn trash(self: &Rc<Self>) {
-        if let Some(id) = self.current_id() {
-            self.request(Request::DeleteItem { id, permanent: false }, "Moved to the trash");
-        }
+        let Some(id) = self.current_id() else { return };
+        let me = self.clone();
+        glib::spawn_future_local(async move {
+            match me.app.request(Request::DeleteItem { id: id.clone(), permanent: false }).await {
+                Ok(_) => {
+                    let app = me.app.clone();
+                    super::window::toast_with_action("Moved to the trash", "Undo", move || {
+                        let (app, id) = (app.clone(), id.clone());
+                        glib::spawn_future_local(async move {
+                            match app.request(Request::RestoreItem { id: id.clone() }).await {
+                                Ok(_) => {
+                                    if let Some(window) = super::window::current() {
+                                        window.select_when_listed(&id);
+                                    }
+                                    super::window::toast("Restored");
+                                }
+                                Err(e) => super::window::toast(&e.message),
+                            }
+                        });
+                    });
+                }
+                Err(e) => (me.notify)(&e.message),
+            }
+        });
     }
 
     fn restore(self: &Rc<Self>) {

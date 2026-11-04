@@ -262,7 +262,7 @@ fn build(app: &Rc<App>) -> adw::PreferencesDialog {
     dialog
 }
 
-fn save(app: &Rc<App>, settings: Settings) {
+pub(super) fn save(app: &Rc<App>, settings: Settings) {
     *app.settings.borrow_mut() = settings.clone();
     let app = app.clone();
     glib::spawn_future_local(async move {

@@ -305,17 +305,24 @@ impl App {
 
     /// Copies a field, asking for the master password first if the item
     /// requires it. Returns the error to show, if any.
-    pub async fn copy(self: &Rc<Self>, parent: &gtk::Widget, id: &str, field: Field) -> Result<(), IpcError> {
+    /// Copies a field in the daemon, re-prompting first if needed. Answers
+    /// whether it copied: not if the re-prompt was cancelled.
+    pub async fn copy(
+        self: &Rc<Self>,
+        parent: &gtk::Widget,
+        id: &str,
+        field: Field,
+    ) -> Result<bool, IpcError> {
         let request = || Request::Copy { id: id.to_owned(), field: field.clone() };
         match self.request(request()).await {
             Err(e) if e.code == ErrorCode::RepromptRequired => {
                 if self.reprompt(parent, id).await? {
-                    self.request(request()).await.map(drop)
+                    self.request(request()).await.map(|_| true)
                 } else {
-                    Ok(())
+                    Ok(false)
                 }
             }
-            other => other.map(drop),
+            other => other.map(|_| true),
         }
     }
 

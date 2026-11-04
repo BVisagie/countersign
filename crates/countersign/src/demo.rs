@@ -115,7 +115,7 @@ fn demo_items() -> Vec<Value> {
         ),
         login(6, "Cloudflare", "alex@fictional.dev", "https://dash.cloudflare.com", Some(104), totp.clone()),
         login(7, "Linear", "alex@fictional.dev", "https://linear.app", Some(101), json!({})),
-        login(8, "Figma", "alex@fictional.dev", "https://www.figma.com", Some(101), json!({})),
+        login(8, "Figma", "alex@fictional.dev", "https://www.figma.com", Some(105), json!({})),
         login(9, "Tailscale", "alex@fictional.dev", "https://login.tailscale.com", Some(104), fav.clone()),
         login(10, "Hacker News", "alexm", "https://news.ycombinator.com", Some(102), json!({})),
         login(11, "Steam", "alexplays", "https://store.steampowered.com", Some(102), json!({})),
@@ -175,10 +175,16 @@ fn demo_items() -> Vec<Value> {
 
 impl Demo {
     pub fn new(events: async_channel::Sender<Option<Event>>, unlocked: bool) -> Self {
-        let folders = [(101, "Work"), (102, "Personal"), (103, "Finance"), (104, "Infrastructure")]
-            .into_iter()
-            .map(|(n, name)| Folder { id: id(n), name: name.into() })
-            .collect();
+        let folders = [
+            (101, "Work"),
+            (105, "Work/Design"),
+            (102, "Personal"),
+            (103, "Finance"),
+            (104, "Infrastructure"),
+        ]
+        .into_iter()
+        .map(|(n, name)| Folder { id: id(n), name: name.into() })
+        .collect();
         Demo {
             state: RefCell::new(DemoState {
                 vault: if unlocked { VaultState::Unlocked } else { VaultState::Locked },

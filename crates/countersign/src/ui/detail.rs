@@ -16,13 +16,22 @@ use serde_json::Value;
 use super::{clear, icon_button, label, monogram, relative_time, short_date};
 use crate::app::App;
 
-const MASK: &str = "••••••••••••";
+/// The same dots as GTK's password entries, so the editor matches.
+const MASK: &str = "●●●●●●●●●●●●";
 const REVEAL_FOR: Duration = Duration::from_secs(60);
+const COPIED_FOR: Duration = Duration::from_millis(1500);
+/// Seconds left at which a verification code shows it is about to change.
+const EXPIRING_AT: u32 = 5;
 
 pub struct Detail {
     pub root: gtk::Stack,
-    /// Edit and menu buttons for the pane's header bar.
-    pub actions: gtk::Box,
+    /// The pane's header bar: edit and menu buttons, or while editing the
+    /// editor's Cancel and Save.
+    pub header: adw::HeaderBar,
+    pub(super) actions: gtk::Box,
+    pub(super) header_start: gtk::Box,
+    pub(super) header_end: gtk::Box,
+    pub(super) header_title: gtk::Label,
     content: gtk::Box,
     pub(super) app: Rc<App>,
     pub(super) notify: Rc<dyn Fn(&str)>,
@@ -57,15 +66,27 @@ impl Detail {
         root.add_named(&empty, Some("empty"));
         root.add_named(&scroller, Some("item"));
         root.set_visible_child_name("empty");
-        let edit_button = icon_button("document-edit-symbolic", "Edit");
+        let edit_button = icon_button("document-edit-symbolic", "Edit (Ctrl+E)");
         let menu_button =
             gtk::MenuButton::builder().icon_name("view-more-symbolic").tooltip_text("More").build();
         let actions = gtk::Box::new(gtk::Orientation::Horizontal, 4);
         actions.append(&edit_button);
         actions.append(&menu_button);
+        let header_start = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        let header_end = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        let header_title = label("", &["title"]);
+        header_title.set_visible(false);
+        let header = adw::HeaderBar::builder().title_widget(&header_title).build();
+        header.pack_start(&header_start);
+        header.pack_end(&actions);
+        header.pack_end(&header_end);
         let detail = Rc::new(Detail {
             root,
+            header,
             actions,
+            header_start,
+            header_end,
+            header_title,
             content,
             app: app.clone(),
             notify,
@@ -170,7 +191,28 @@ impl Detail {
             });
         titles.append(&label(&subtitle, &["cs-detail-subtitle"]));
         header.append(&titles);
-        if item["favorite"].as_bool() == Some(true) {
+        let favorite = item["favorite"].as_bool() == Some(true);
+        let in_trash = text(&item["deletedDate"]).is_some();
+        if !in_trash {
+            let (icon, tip) = if favorite {
+                ("starred-symbolic", "Remove from favorites")
+            } else {
+                ("non-starred-symbolic", "Add to favorites")
+            };
+            let star = icon_button(icon, tip);
+            star.add_css_class("cs-favorite");
+            if favorite {
+                star.add_css_class("on");
+            }
+            star.set_valign(gtk::Align::Start);
+            let weak = Rc::downgrade(self);
+            star.connect_clicked(move |_| {
+                if let Some(me) = weak.upgrade() {
+                    me.toggle_favorite();
+                }
+            });
+            header.append(&star);
+        } else if favorite {
             let star = gtk::Image::from_icon_name("starred-symbolic");
             star.add_css_class("cs-badge");
             star.add_css_class("favorite");
@@ -190,7 +232,20 @@ impl Detail {
         chips.append(&chip(kind.label()));
         let vault = self.vault.borrow().clone();
         if let Some(folder) = text(&item["folderId"]).and_then(|f| vault.folders.iter().find(|x| x.id == f)) {
-            chips.append(&chip(&format!("Folder · {}", folder.name)));
+            // The folder chip opens the folder.
+            let open = gtk::Button::builder()
+                .label(format!("Folder · {}", folder.name))
+                .css_classes(["flat", "cs-chip"])
+                .tooltip_text("Show this folder")
+                .halign(gtk::Align::Start)
+                .build();
+            let id = folder.id.clone();
+            open.connect_clicked(move |_| {
+                if let Some(window) = super::window::current() {
+                    window.show_folder(&id);
+                }
+            });
+            chips.append(&open);
         }
         if let Some(org) =
             text(&item["organizationId"]).and_then(|o| vault.organizations.iter().find(|x| x.id == o))
@@ -425,7 +480,7 @@ impl Detail {
         row.add_css_class("cs-field");
         let text = gtk::Box::new(gtk::Orientation::Vertical, 3);
         text.set_hexpand(true);
-        text.append(&label(&title.to_uppercase(), &["cs-field-label"]));
+        text.append(&label(title, &["cs-field-label"]));
         text.append(value);
         row.append(&text);
         let buttons = gtk::Box::new(gtk::Orientation::Horizontal, 2);
@@ -465,6 +520,7 @@ impl Detail {
         reveal.connect_clicked(move |button| {
             let Some(me) = me.upgrade() else { return };
             if shown.get() {
+                value.set_use_markup(false);
                 value.set_label(MASK);
                 value.set_selectable(false);
                 value.add_css_class("secret");
@@ -476,13 +532,21 @@ impl Detail {
                 (value.clone(), button.clone(), shown.clone(), field.clone(), id.clone());
             let generation = me.generation.get();
             glib::spawn_future_local(async move {
+                // Passwords color digits and symbols, as the generator does;
+                // numbers and keys would only be all one color.
+                let colored =
+                    matches!(field, Field::Password | Field::PasswordHistory { .. } | Field::Custom { .. });
                 let result = me.app.reveal(button.upcast_ref(), &id, field).await;
                 if me.generation.get() != generation {
                     return;
                 }
                 match result {
                     Ok(Some(secret)) => {
-                        value.set_label(secret.expose());
+                        if colored {
+                            value.set_markup(&super::generator::markup(secret.expose()));
+                        } else {
+                            value.set_label(secret.expose());
+                        }
                         value.remove_css_class("secret");
                         button.set_icon_name("view-conceal-symbolic");
                         shown.set(true);
@@ -495,6 +559,7 @@ impl Detail {
                             if weak.upgrade().is_none_or(|me| me.generation.get() != generation) {
                                 return;
                             }
+                            value.set_use_markup(false);
                             value.set_label(MASK);
                             value.set_selectable(false);
                             value.add_css_class("secret");
@@ -511,7 +576,7 @@ impl Detail {
     }
 
     fn totp_field(self: &Rc<Self>, id: &str) -> gtk::Box {
-        let code = label("••• •••", &["cs-field-value", "code"]);
+        let code = label("●●● ●●●", &["cs-field-value", "code"]);
         let (row, buttons) = self.row("Verification code", code.upcast_ref());
         let countdown = gtk::Label::new(None);
         countdown.add_css_class("cs-meta");
@@ -559,6 +624,7 @@ impl Detail {
                             remaining.set(totp.remaining);
                             ring.set_value(f64::from(totp.remaining));
                             countdown.set_label(&format!("{}s", totp.remaining));
+                            mark_expiring(&code, totp.remaining);
                         }
                         Err(e) if e.code == ErrorCode::Premium => {
                             code.set_label("Needs Bitwarden Premium");
@@ -591,6 +657,7 @@ impl Detail {
                 remaining.set(left - 1);
                 ring.set_value(f64::from(left - 1));
                 countdown.set_label(&format!("{}s", left - 1));
+                mark_expiring(&code, left - 1);
             }
             glib::ControlFlow::Continue
         });
@@ -601,7 +668,8 @@ impl Detail {
     fn uri_field(self: &Rc<Self>, id: &str, index: usize, uri: &str) -> gtk::Box {
         let value = label(uri, &["cs-field-value"]);
         value.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
-        let (row, buttons) = self.row(if index == 0 { "Website" } else { "Also" }, value.upcast_ref());
+        let title = if index == 0 { "Website".to_owned() } else { format!("Website {}", index + 1) };
+        let (row, buttons) = self.row(&title, value.upcast_ref());
         if let Some(target) = launchable(uri) {
             let open = icon_button("adw-external-link-symbolic", "Open website");
             open.connect_clicked(move |button| {
@@ -669,12 +737,36 @@ impl Detail {
             let Some(me) = me.upgrade() else { return };
             let (button, id, field) = (button.clone(), id.clone(), field.clone());
             glib::spawn_future_local(async move {
-                if let Err(e) = me.app.copy(button.upcast_ref(), &id, field).await {
-                    (me.notify)(&e.message);
+                match me.app.copy(button.upcast_ref(), &id, field).await {
+                    Ok(true) => confirm_copy(&button),
+                    Ok(false) => {}
+                    Err(e) => (me.notify)(&e.message),
                 }
             });
         });
     }
+}
+
+/// Colors a verification code in its last seconds, when a copy may expire
+/// before it is used.
+fn mark_expiring(code: &gtk::Label, remaining: u32) {
+    if remaining <= EXPIRING_AT {
+        code.add_css_class("expiring");
+    } else {
+        code.remove_css_class("expiring");
+    }
+}
+
+/// Shows a check on a copy button for a moment, where the click was; the
+/// receipt bar has the details.
+fn confirm_copy(button: &gtk::Button) {
+    button.set_icon_name("object-select-symbolic");
+    let weak = button.downgrade();
+    glib::timeout_add_local_once(COPIED_FOR, move || {
+        if let Some(button) = weak.upgrade() {
+            button.set_icon_name("edit-copy-symbolic");
+        }
+    });
 }
 
 /// A web address safe to hand to the browser, adding `https://` when the

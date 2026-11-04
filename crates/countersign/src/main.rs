@@ -166,6 +166,19 @@ fn install_actions(app: &Rc<App>) {
         let app = app.clone();
         add("settings", Rc::new(move || crate::ui::prefs::present(&app)));
     }
+    for (name, present) in [
+        ("shortcuts", crate::ui::shortcuts::present_shortcuts as fn(Option<&gtk::Widget>)),
+        ("about", crate::ui::shortcuts::present_about),
+    ] {
+        add(
+            name,
+            Rc::new(move || {
+                let parent = crate::ui::window::current().map(|w| w.window.clone().upcast::<gtk::Widget>());
+                present(parent.as_ref());
+            }),
+        );
+    }
+    app.gtk.set_accels_for_action("app.shortcuts", &["<Control>question"]);
     app.gtk.set_accels_for_action("app.quit", &["<Control>q"]);
     app.gtk.set_accels_for_action("app.settings", &["<Control>comma"]);
 }

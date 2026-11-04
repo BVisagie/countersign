@@ -109,7 +109,11 @@ pub fn summarize(item: &Value) -> Option<ItemSummary> {
                 ["firstName", "lastName"].iter().filter_map(|k| text(&item["identity"][*k])).collect();
             if parts.is_empty() { text(&item["identity"]["email"]) } else { Some(parts.join(" ")) }
         }
-        ItemKind::SshKey => text(&item["sshKey"]["keyFingerprint"]),
+        ItemKind::SshKey => text(&item["sshKey"]["publicKey"])
+            .as_deref()
+            .and_then(ssh_key_type)
+            .map(|kind| format!("{kind} key"))
+            .or_else(|| text(&item["sshKey"]["keyFingerprint"])),
         ItemKind::SecureNote => None,
     };
     let collection_ids =
@@ -138,6 +142,19 @@ pub fn summarize(item: &Value) -> Option<ItemSummary> {
 
 /// The lower-case host of a web address, without user info or port.
 /// Addresses without a scheme are treated as hosts, as Bitwarden does.
+/// The algorithm of an OpenSSH public key, named as `ssh-keygen -l` does.
+fn ssh_key_type(public_key: &str) -> Option<&'static str> {
+    Some(match public_key.split_whitespace().next()? {
+        "ssh-ed25519" => "ED25519",
+        "sk-ssh-ed25519@openssh.com" => "ED25519-SK",
+        "ssh-rsa" => "RSA",
+        "ecdsa-sha2-nistp256" | "ecdsa-sha2-nistp384" | "ecdsa-sha2-nistp521" => "ECDSA",
+        "sk-ecdsa-sha2-nistp256@openssh.com" => "ECDSA-SK",
+        "ssh-dss" => "DSA",
+        _ => return None,
+    })
+}
+
 pub(crate) fn host_of(uri: &str) -> Option<String> {
     let rest = match uri.split_once("://") {
         Some((scheme, rest)) if scheme.chars().all(|c| c.is_ascii_alphanumeric() || "+-.".contains(c)) => {
@@ -318,6 +335,9 @@ pub struct Settings {
     pub sync_interval_mins: u32,
     pub close_to_background: bool,
     pub cli_path: Option<PathBuf>,
+    /// The generator's last options, shared by the generator page and the
+    /// editor's generate button.
+    pub generator: GenerateOptions,
 }
 
 impl Default for Settings {
@@ -332,6 +352,7 @@ impl Default for Settings {
             sync_interval_mins: 10,
             close_to_background: true,
             cli_path: None,
+            generator: GenerateOptions::default(),
         }
     }
 }
@@ -348,6 +369,19 @@ impl Settings {
         if self.sync_interval_mins != 0 {
             self.sync_interval_mins = self.sync_interval_mins.clamp(1, 1440);
         }
+        self.generator = self.generator.normalized();
+        self
+    }
+}
+
+impl GenerateOptions {
+    /// Clamps values into the ranges the generator offers.
+    pub fn normalized(mut self) -> Self {
+        self.length = self.length.clamp(5, 128);
+        self.min_number = self.min_number.min(9);
+        self.min_special = self.min_special.min(9);
+        self.words = self.words.clamp(3, 20);
+        self.separator = self.separator.chars().take(1).collect();
         self
     }
 }
@@ -398,6 +432,19 @@ mod tests {
     }
 
     #[test]
+    fn ssh_keys_are_summarized_by_their_type() {
+        let key = |public: &str| {
+            json!({"id": "k", "type": 5, "name": "Deploy key",
+                   "sshKey": {"publicKey": public, "keyFingerprint": "SHA256:abc"}})
+        };
+        let subtitle = |public: &str| summarize(&key(public)).and_then(|s| s.subtitle);
+        assert_eq!(subtitle("ssh-ed25519 AAAAC3Nza alex@laptop").as_deref(), Some("ED25519 key"));
+        assert_eq!(subtitle("ecdsa-sha2-nistp384 AAAA").as_deref(), Some("ECDSA key"));
+        // An unknown algorithm falls back to the fingerprint.
+        assert_eq!(subtitle("ssh-new AAAA").as_deref(), Some("SHA256:abc"));
+    }
+
+    #[test]
     fn settings_are_clamped() {
         let s =
             Settings { clipboard_clear_secs: 1, totp_follow_up_secs: 99, ..Settings::default() }.normalized();
@@ -405,5 +452,12 @@ mod tests {
         assert_eq!(s.totp_follow_up_secs, 4);
         let parsed: Settings = serde_json::from_str("{}").unwrap();
         assert_eq!(parsed, Settings::default());
+        let generator =
+            GenerateOptions { length: 500, words: 1, separator: "-_".into(), ..Default::default() };
+        let s = Settings { generator, ..Settings::default() }.normalized();
+        assert_eq!((s.generator.length, s.generator.words, s.generator.separator.as_str()), (128, 3, "-"));
+        // Settings from before the generator was remembered still read.
+        let parsed: Settings = serde_json::from_str(r#"{"clipboard_clear_secs": 45}"#).unwrap();
+        assert_eq!(parsed.generator, GenerateOptions::default());
     }
 }
