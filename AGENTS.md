@@ -43,6 +43,9 @@ The build links system libraries, `vte4` among them;
 - When changing `MINIMUM_VERSION` or `PINNED_VERSION` in `countersign-bw`,
   rerun the contract test against that release and update the installer's
   checksums.
+- The repository is public. A pull request description says what changed
+  and how it was tested, for any reader. Leave out review rounds, reviewer
+  verdicts, model names and tool errors.
 
 ## Development data
 
