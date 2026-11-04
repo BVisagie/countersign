@@ -10,6 +10,7 @@ pub mod prefs;
 pub mod quick;
 pub mod reprompt;
 pub mod sends;
+pub mod shortcuts;
 pub mod window;
 
 use countersign_ipc::ItemKind;

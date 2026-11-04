@@ -346,6 +346,10 @@ impl MainWindow {
         section.append(Some("Lock"), Some("win.lock"));
         section.append(Some("Sign out…"), Some("win.sign-out"));
         menu.append_section(None, &section);
+        let section = gio::Menu::new();
+        section.append(Some("Keyboard shortcuts"), Some("app.shortcuts"));
+        section.append(Some("About Countersign"), Some("app.about"));
+        menu.append_section(None, &section);
         let menu_button = gtk::MenuButton::builder()
             .icon_name("open-menu-symbolic")
             .menu_model(&menu)
