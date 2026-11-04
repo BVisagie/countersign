@@ -20,6 +20,8 @@ use crate::app::App;
 const MASK: &str = "●●●●●●●●●●●●";
 const REVEAL_FOR: Duration = Duration::from_secs(60);
 const COPIED_FOR: Duration = Duration::from_millis(1500);
+/// Seconds left at which a verification code shows it is about to change.
+const EXPIRING_AT: u32 = 5;
 
 pub struct Detail {
     pub root: gtk::Stack,
@@ -189,7 +191,28 @@ impl Detail {
             });
         titles.append(&label(&subtitle, &["cs-detail-subtitle"]));
         header.append(&titles);
-        if item["favorite"].as_bool() == Some(true) {
+        let favorite = item["favorite"].as_bool() == Some(true);
+        let in_trash = text(&item["deletedDate"]).is_some();
+        if !in_trash {
+            let (icon, tip) = if favorite {
+                ("starred-symbolic", "Remove from favorites")
+            } else {
+                ("non-starred-symbolic", "Add to favorites")
+            };
+            let star = icon_button(icon, tip);
+            star.add_css_class("cs-favorite");
+            if favorite {
+                star.add_css_class("on");
+            }
+            star.set_valign(gtk::Align::Start);
+            let weak = Rc::downgrade(self);
+            star.connect_clicked(move |_| {
+                if let Some(me) = weak.upgrade() {
+                    me.toggle_favorite();
+                }
+            });
+            header.append(&star);
+        } else if favorite {
             let star = gtk::Image::from_icon_name("starred-symbolic");
             star.add_css_class("cs-badge");
             star.add_css_class("favorite");
@@ -209,7 +232,20 @@ impl Detail {
         chips.append(&chip(kind.label()));
         let vault = self.vault.borrow().clone();
         if let Some(folder) = text(&item["folderId"]).and_then(|f| vault.folders.iter().find(|x| x.id == f)) {
-            chips.append(&chip(&format!("Folder · {}", folder.name)));
+            // The folder chip opens the folder.
+            let open = gtk::Button::builder()
+                .label(format!("Folder · {}", folder.name))
+                .css_classes(["flat", "cs-chip"])
+                .tooltip_text("Show this folder")
+                .halign(gtk::Align::Start)
+                .build();
+            let id = folder.id.clone();
+            open.connect_clicked(move |_| {
+                if let Some(window) = super::window::current() {
+                    window.show_folder(&id);
+                }
+            });
+            chips.append(&open);
         }
         if let Some(org) =
             text(&item["organizationId"]).and_then(|o| vault.organizations.iter().find(|x| x.id == o))
@@ -588,6 +624,7 @@ impl Detail {
                             remaining.set(totp.remaining);
                             ring.set_value(f64::from(totp.remaining));
                             countdown.set_label(&format!("{}s", totp.remaining));
+                            mark_expiring(&code, totp.remaining);
                         }
                         Err(e) if e.code == ErrorCode::Premium => {
                             code.set_label("Needs Bitwarden Premium");
@@ -620,6 +657,7 @@ impl Detail {
                 remaining.set(left - 1);
                 ring.set_value(f64::from(left - 1));
                 countdown.set_label(&format!("{}s", left - 1));
+                mark_expiring(&code, left - 1);
             }
             glib::ControlFlow::Continue
         });
@@ -630,7 +668,8 @@ impl Detail {
     fn uri_field(self: &Rc<Self>, id: &str, index: usize, uri: &str) -> gtk::Box {
         let value = label(uri, &["cs-field-value"]);
         value.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
-        let (row, buttons) = self.row(if index == 0 { "Website" } else { "Also" }, value.upcast_ref());
+        let title = if index == 0 { "Website".to_owned() } else { format!("Website {}", index + 1) };
+        let (row, buttons) = self.row(&title, value.upcast_ref());
         if let Some(target) = launchable(uri) {
             let open = icon_button("adw-external-link-symbolic", "Open website");
             open.connect_clicked(move |button| {
@@ -705,6 +744,16 @@ impl Detail {
                 }
             });
         });
+    }
+}
+
+/// Colors a verification code in its last seconds, when a copy may expire
+/// before it is used.
+fn mark_expiring(code: &gtk::Label, remaining: u32) {
+    if remaining <= EXPIRING_AT {
+        code.add_css_class("expiring");
+    } else {
+        code.remove_css_class("expiring");
     }
 }
 

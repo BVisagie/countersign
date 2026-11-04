@@ -1121,6 +1121,11 @@ impl MainWindow {
         }
     }
 
+    /// Shows the folder with `id` in the sidebar.
+    pub fn show_folder(&self, id: &str) {
+        self.show_vault_filter(Filter::Folder(Some(id.to_owned())));
+    }
+
     /// Selects `id` now if the vault lists it, or as soon as it does.
     pub fn select_when_listed(&self, id: &str) {
         if self.items.borrow().iter().any(|i| i.id == id) {

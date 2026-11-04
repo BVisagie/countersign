@@ -100,6 +100,10 @@ listview.cs-items > row:selected .cs-item-subtitle { color: var(--cs-selection-f
   font-size: 0.76em; padding: 2px 8px; background-color: var(--cs-hover);
   color: var(--cs-dim);
 }
+button.cs-chip { min-height: 0; min-width: 0; font-weight: normal; }
+button.cs-chip:hover { color: var(--window-fg-color); background-color: var(--cs-line); }
+button.cs-favorite { color: var(--cs-muted); }
+button.cs-favorite.on { color: var(--warning-color); }
 .cs-fields {
   border: 1px solid var(--cs-line); border-radius: var(--cs-radius-small);
   background-color: var(--card-bg-color);
@@ -109,6 +113,7 @@ listview.cs-items > row:selected .cs-item-subtitle { color: var(--cs-selection-f
 .cs-field-label { font-size: 0.82em; color: var(--cs-muted); }
 .cs-field-value { font-size: 1em; }
 .cs-field-value.code { font-size: 1.35em; font-weight: 700; letter-spacing: 0.08em; color: var(--accent-color); }
+.cs-field-value.code.expiring { color: var(--warning-color); }
 .cs-field button.flat { min-width: 28px; min-height: 28px; padding: 0; color: var(--cs-dim); }
 .cs-field button.flat:hover { color: var(--window-fg-color); background-color: var(--cs-hover); }
 .cs-group-title {

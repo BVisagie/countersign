@@ -194,7 +194,7 @@ impl Detail {
     }
 
     /// Done in the daemon, so the item's secrets never reach the app.
-    fn toggle_favorite(self: &Rc<Self>) {
+    pub(super) fn toggle_favorite(self: &Rc<Self>) {
         let Some(id) = self.current_id() else { return };
         let favorite = !self.vault.borrow().items.iter().any(|i| i.id == id && i.favorite);
         let me = self.clone();
