@@ -233,6 +233,8 @@ pub struct MainWindow {
     sidebar: gtk::ListBox,
     /// The generator and Send, pinned below the sidebar's filters.
     tools: gtk::ListBox,
+    /// The main menu's folder actions, listed while a folder is shown.
+    folder_menu_section: gio::Menu,
     filters: RefCell<Vec<Filter>>,
     filter: RefCell<Filter>,
     pub search: gtk::SearchEntry,
@@ -346,6 +348,8 @@ impl MainWindow {
         section.append(Some("Lock"), Some("win.lock"));
         section.append(Some("Sign out…"), Some("win.sign-out"));
         menu.append_section(None, &section);
+        let folder_menu_section = gio::Menu::new();
+        menu.append_section(None, &folder_menu_section);
         let section = gio::Menu::new();
         section.append(Some("Keyboard shortcuts"), Some("app.shortcuts"));
         section.append(Some("About Countersign"), Some("app.about"));
@@ -506,6 +510,7 @@ impl MainWindow {
             setup,
             sidebar,
             tools,
+            folder_menu_section,
             filters: RefCell::default(),
             filter: RefCell::new(Filter::All),
             search,
@@ -584,6 +589,16 @@ impl MainWindow {
             self.window.add_action(&new_item);
         }
         action("new-folder", |me| me.ask_folder_name(None));
+        action("rename-folder", |me| {
+            if let Some(folder) = me.shown_folder() {
+                me.ask_folder_name(Some(folder));
+            }
+        });
+        action("delete-folder", |me| {
+            if let Some(folder) = me.shown_folder() {
+                me.delete_folder(folder);
+            }
+        });
         action("edit", |me| {
             if me.content.visible_child_name().as_deref() == Some("vault")
                 && me.window.visible_dialog().is_none()
@@ -625,42 +640,38 @@ impl MainWindow {
         }
 
         {
-            // Right-click a folder to rename or delete it.
+            // Right-click a folder, or press the menu key on it, to rename or
+            // delete it.
             let weak = weak.clone();
             let right = gtk::GestureClick::new();
             right.set_button(gdk::BUTTON_SECONDARY);
             right.connect_pressed(move |_, _, _, y| {
                 let Some(me) = weak.upgrade() else { return };
-                let Some(row) = me.sidebar.row_at_y(y as i32) else { return };
-                let filter = me.filters.borrow().get(row.index() as usize).cloned();
-                let Some(Filter::Folder(Some(id))) = filter else { return };
-                let Some(folder) = me.app.vault.borrow().folders.iter().find(|f| f.id == id).cloned() else {
-                    return;
-                };
-                let popover = gtk::Popover::new();
-                let column = gtk::Box::new(gtk::Orientation::Vertical, 2);
-                for (label, rename) in [("Rename…", true), ("Delete…", false)] {
-                    let button = gtk::Button::builder().label(label).css_classes(["flat"]).build();
-                    let (me, folder, popover) = (me.clone(), folder.clone(), popover.clone());
-                    button.connect_clicked(move |_| {
-                        popover.popdown();
-                        if rename {
-                            me.ask_folder_name(Some(folder.clone()))
-                        } else {
-                            me.delete_folder(folder.clone())
-                        }
-                    });
-                    column.append(&button);
+                if let Some(row) = me.sidebar.row_at_y(y as i32) {
+                    me.folder_menu(&row);
                 }
-                popover.set_child(Some(&column));
-                popover.set_parent(&row);
-                popover.connect_closed(|p| {
-                    let p = p.clone();
-                    glib::idle_add_local_once(move || p.unparent());
-                });
-                popover.popup();
             });
             self.sidebar.add_controller(right);
+        }
+        {
+            let weak = weak.clone();
+            let keys = gtk::EventControllerKey::new();
+            keys.connect_key_pressed(move |_, key, _, state| {
+                let Some(me) = weak.upgrade() else { return glib::Propagation::Proceed };
+                let menu_key = key == gdk::Key::Menu
+                    || (key == gdk::Key::F10 && state.contains(gdk::ModifierType::SHIFT_MASK));
+                let focused = gtk::prelude::GtkWindowExt::focus(&me.window)
+                    .and_then(|w| w.ancestor(gtk::ListBoxRow::static_type()))
+                    .and_downcast::<gtk::ListBoxRow>();
+                match focused.or_else(|| me.sidebar.selected_row()) {
+                    Some(row) if menu_key => {
+                        me.folder_menu(&row);
+                        glib::Propagation::Stop
+                    }
+                    _ => glib::Propagation::Proceed,
+                }
+            });
+            self.sidebar.add_controller(keys);
         }
         {
             let weak = weak.clone();
@@ -833,6 +844,52 @@ impl MainWindow {
         }
     }
 
+    /// Opens Rename and Delete for the folder on `row`, if it is one.
+    fn folder_menu(self: &Rc<Self>, row: &gtk::ListBoxRow) {
+        let filter = self.filters.borrow().get(row.index() as usize).cloned();
+        let Some(Filter::Folder(Some(id))) = filter else { return };
+        let Some(folder) = self.app.vault.borrow().folders.iter().find(|f| f.id == id).cloned() else {
+            return;
+        };
+        let popover = gtk::Popover::new();
+        let column = gtk::Box::new(gtk::Orientation::Vertical, 2);
+        for (label, rename) in [("Rename…", true), ("Delete…", false)] {
+            let button = gtk::Button::builder().label(label).css_classes(["flat"]).build();
+            let (me, folder, popover) = (self.clone(), folder.clone(), popover.clone());
+            button.connect_clicked(move |_| {
+                popover.popdown();
+                if rename {
+                    me.ask_folder_name(Some(folder.clone()))
+                } else {
+                    me.delete_folder(folder.clone())
+                }
+            });
+            column.append(&button);
+        }
+        popover.set_child(Some(&column));
+        popover.set_parent(row);
+        popover.connect_closed(|p| {
+            let p = p.clone();
+            glib::idle_add_local_once(move || p.unparent());
+        });
+        popover.popup();
+    }
+
+    /// The folder the sidebar shows, if it shows one.
+    fn shown_folder(&self) -> Option<countersign_ipc::Folder> {
+        let Filter::Folder(Some(id)) = &*self.filter.borrow() else { return None };
+        self.app.vault.borrow().folders.iter().find(|f| f.id == *id).cloned()
+    }
+
+    /// Lists Rename and Delete in the main menu while a folder is shown.
+    fn update_folder_menu(&self) {
+        self.folder_menu_section.remove_all();
+        if self.shown_folder().is_some() {
+            self.folder_menu_section.append(Some("Rename folder…"), Some("win.rename-folder"));
+            self.folder_menu_section.append(Some("Delete folder…"), Some("win.delete-folder"));
+        }
+    }
+
     /// Shows what a sidebar row stands for: a vault filter or a tool page.
     fn apply_filter(&self, filter: Filter) {
         // The selection, tool pages included, is what the sidebar restores
@@ -843,6 +900,7 @@ impl MainWindow {
             _ => "vault",
         };
         *self.filter.borrow_mut() = filter;
+        self.update_folder_menu();
         self.content.set_visible_child_name(page);
         match page {
             "generator" => self.generator.ensure_value(),
@@ -1178,8 +1236,19 @@ fn nav_row(icon: &str, text: &str, count: Option<usize>) -> gtk::Box {
 }
 
 /// The window actions that act on the open vault.
-const VAULT_ACTIONS: [&str; 9] =
-    ["lock", "sync", "sign-out", "new-item", "new-folder", "edit", "generator", "sends", "focus-search"];
+const VAULT_ACTIONS: [&str; 11] = [
+    "lock",
+    "sync",
+    "sign-out",
+    "new-item",
+    "new-folder",
+    "rename-folder",
+    "delete-folder",
+    "edit",
+    "generator",
+    "sends",
+    "focus-search",
+];
 
 /// The page the main window shows for `status`, given the page it shows
 /// now. While the vault opens, an unlock form on screen stays, busy; any
