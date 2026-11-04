@@ -199,7 +199,7 @@ impl Demo {
 
     fn status(&self) -> Status {
         Status {
-            cli: CliState::Ready { version: "2026.10.1".into(), managed: true },
+            cli: CliState::Ready { version: "2026.10.1".into(), managed: true, update: None },
             vault: self.state.borrow().vault,
             account: Some(Account {
                 email: Some("alex@fictional.dev".into()),

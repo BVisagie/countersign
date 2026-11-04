@@ -1476,7 +1476,7 @@ mod tests {
 
     fn status(vault: VaultState) -> Status {
         Status {
-            cli: CliState::Ready { version: "2026.10.1".into(), managed: true },
+            cli: CliState::Ready { version: "2026.10.1".into(), managed: true, update: None },
             vault,
             account: None,
             server_url: None,

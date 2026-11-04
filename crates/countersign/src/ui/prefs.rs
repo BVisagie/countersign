@@ -9,7 +9,7 @@ use adw::prelude::*;
 use countersign_ipc::{CliState, Request, Response, Settings};
 use gtk::{gdk, glib};
 
-use super::gates::{confirm_sign_out, server_name};
+use super::gates::{busy_button, confirm_sign_out, server_name, set_button_busy};
 use crate::app::App;
 
 const QUICK_BINDING: &str = r#"o.bind("SUPER + SHIFT + P", "Passwords", "countersign --quick")"#;
@@ -143,10 +143,10 @@ fn build(app: &Rc<App>) -> adw::PreferencesDialog {
 
     let cli = adw::PreferencesGroup::builder().title("Bitwarden CLI").build();
     let (cli_title, cli_subtitle) = match &status.cli {
-        CliState::Ready { version, managed: true } => {
+        CliState::Ready { version, managed: true, .. } => {
             (format!("Official CLI {version}"), "Installed and checked by Countersign".to_owned())
         }
-        CliState::Ready { version, managed: false } => (
+        CliState::Ready { version, managed: false, .. } => (
             format!("Official CLI {version}"),
             settings.cli_path.as_ref().map(|p| p.display().to_string()).unwrap_or_else(|| "From PATH".into()),
         ),
@@ -176,6 +176,9 @@ fn build(app: &Rc<App>) -> adw::PreferencesDialog {
                 dialog.close();
             });
         });
+    }
+    if let CliState::Ready { update: Some(next), .. } = &status.cli {
+        cli.add(&update_row(app, &dialog, next));
     }
     if settings.cli_path.is_some() {
         let managed = gtk::Button::builder().label("Use the managed CLI").valign(gtk::Align::Center).build();
@@ -260,6 +263,44 @@ fn build(app: &Rc<App>) -> adw::PreferencesDialog {
         });
     }
     dialog
+}
+
+/// Offers the release this Countersign pins in place of the older copy it
+/// installed before. The daemon locks the vault once the new copy is checked,
+/// so the dialog closes then; a failure stays on the row, in full.
+fn update_row(app: &Rc<App>, dialog: &adw::PreferencesDialog, next: &str) -> adw::ActionRow {
+    let row = adw::ActionRow::builder()
+        .title(format!("Version {next} is available"))
+        .subtitle("Installing it locks Countersign")
+        .build();
+    let install = busy_button("Install", &[]);
+    install.set_valign(gtk::Align::Center);
+    row.add_suffix(&install);
+    // Weak: the dialog holds this through its button.
+    let (app, dialog, row_ref) = (app.clone(), dialog.downgrade(), row.downgrade());
+    install.connect_clicked(move |button| {
+        button.set_sensitive(false);
+        set_button_busy(button, true);
+        let (app, dialog, row, button) = (app.clone(), dialog.clone(), row_ref.clone(), button.clone());
+        glib::spawn_future_local(async move {
+            let result = app.request(Request::InstallCli).await;
+            set_button_busy(&button, false);
+            match result {
+                Ok(_) => {
+                    if let Some(dialog) = dialog.upgrade() {
+                        dialog.close();
+                    }
+                }
+                Err(e) => {
+                    button.set_sensitive(true);
+                    if let Some(row) = row.upgrade() {
+                        row.set_subtitle(&e.message);
+                    }
+                }
+            }
+        });
+    });
+    row
 }
 
 pub(super) fn save(app: &Rc<App>, settings: Settings) {
