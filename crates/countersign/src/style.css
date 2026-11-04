@@ -6,8 +6,9 @@
   --cs-radius-small: 6px;
   --cs-bg-darker: var(--headerbar-bg-color);
   --cs-bg-lighter: var(--popover-bg-color);
-  --cs-dim: color-mix(in srgb, var(--window-fg-color) 78%, transparent);
-  --cs-muted: color-mix(in srgb, var(--window-fg-color) 55%, transparent);
+  --cs-dim: color-mix(in srgb, var(--window-fg-color) 86%, transparent);
+  /* 75% keeps secondary text at 4.5:1 or more on libadwaita's light sidebar. */
+  --cs-muted: color-mix(in srgb, var(--window-fg-color) 75%, transparent);
   --cs-line: color-mix(in srgb, var(--window-fg-color) 12%, transparent);
   --cs-line-strong: color-mix(in srgb, var(--window-fg-color) 28%, transparent);
   --cs-hover: color-mix(in srgb, var(--window-fg-color) 7%, transparent);
