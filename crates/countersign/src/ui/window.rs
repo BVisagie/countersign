@@ -222,6 +222,8 @@ pub struct MainWindow {
     sign_in: Rc<SignIn>,
     setup: Rc<Setup>,
     sidebar: gtk::ListBox,
+    /// The generator and Send, pinned below the sidebar's filters.
+    tools: gtk::ListBox,
     filters: RefCell<Vec<Filter>>,
     filter: RefCell<Filter>,
     pub search: gtk::SearchEntry,
@@ -295,9 +297,21 @@ impl MainWindow {
         account.append(&dot);
         account.append(&account_text);
         account.append(&lock_button);
+        // The tools stay pinned above the account, however long the
+        // folder list grows.
+        let tools = gtk::ListBox::new();
+        tools.add_css_class("cs-nav");
+        tools.add_css_class("cs-tools");
+        tools.set_selection_mode(gtk::SelectionMode::Single);
+        for (_, icon, text) in TOOLS {
+            tools.append(&nav_row(icon, text, None));
+        }
+        let sidebar_column = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        sidebar_column.append(&sidebar_scroll);
+        sidebar_column.append(&tools);
         let sidebar_view = adw::ToolbarView::new();
         sidebar_view.add_top_bar(&sidebar_header);
-        sidebar_view.set_content(Some(&sidebar_scroll));
+        sidebar_view.set_content(Some(&sidebar_column));
         sidebar_view.add_bottom_bar(&account);
         sidebar_view.add_css_class("cs-sidebar");
 
@@ -318,6 +332,7 @@ impl MainWindow {
         menu.append_section(None, &section);
         let section = gio::Menu::new();
         section.append(Some("Password generator"), Some("win.generator"));
+        section.append(Some("Send"), Some("win.sends"));
         section.append(Some("Settings"), Some("app.settings"));
         section.append(Some("Lock"), Some("win.lock"));
         section.append(Some("Sign out…"), Some("win.sign-out"));
@@ -479,6 +494,7 @@ impl MainWindow {
             sign_in,
             setup,
             sidebar,
+            tools,
             filters: RefCell::default(),
             filter: RefCell::new(Filter::All),
             search,
@@ -571,6 +587,7 @@ impl MainWindow {
         self.app.gtk.set_accels_for_action("win.sync", &["<Control>r"]);
         self.app.gtk.set_accels_for_action("win.focus-search", &["<Control>f"]);
         self.app.gtk.set_accels_for_action("win.generator", &["<Control>g"]);
+        self.app.gtk.set_accels_for_action("win.sends", &["<Control><Shift>s"]);
         self.app.gtk.set_accels_for_action("win.new-item::login", &["<Control>n"]);
         {
             // Keep "Synced N minutes ago" current.
@@ -627,23 +644,18 @@ impl MainWindow {
                 let (Some(me), Some(row)) = (weak.upgrade(), row) else { return };
                 let filter = me.filters.borrow().get(row.index() as usize).cloned();
                 if let Some(filter) = filter {
-                    // The selection, tool pages included, is what the sidebar
-                    // restores after a sync rebuilds it.
-                    let page = match filter {
-                        Filter::Generator => "generator",
-                        Filter::Sends => "sends",
-                        _ => "vault",
-                    };
-                    *me.filter.borrow_mut() = filter;
-                    me.content.set_visible_child_name(page);
-                    match page {
-                        "generator" => me.generator.ensure_value(),
-                        "sends" => {}
-                        _ => me.refresh_list(),
-                    }
-                    if me.split.is_collapsed() {
-                        me.split.set_show_sidebar(false);
-                    }
+                    me.tools.unselect_all();
+                    me.apply_filter(filter);
+                }
+            });
+        }
+        {
+            let weak = weak.clone();
+            self.tools.connect_row_selected(move |_, row| {
+                let (Some(me), Some(row)) = (weak.upgrade(), row) else { return };
+                if let Some((filter, _, _)) = TOOLS.get(row.index() as usize) {
+                    me.sidebar.unselect_all();
+                    me.apply_filter(filter.clone());
                 }
             });
         }
@@ -783,6 +795,27 @@ impl MainWindow {
         }
     }
 
+    /// Shows what a sidebar row stands for: a vault filter or a tool page.
+    fn apply_filter(&self, filter: Filter) {
+        // The selection, tool pages included, is what the sidebar restores
+        // after a sync rebuilds it.
+        let page = match filter {
+            Filter::Generator => "generator",
+            Filter::Sends => "sends",
+            _ => "vault",
+        };
+        *self.filter.borrow_mut() = filter;
+        self.content.set_visible_child_name(page);
+        match page {
+            "generator" => self.generator.ensure_value(),
+            "sends" => {}
+            _ => self.refresh_list(),
+        }
+        if self.split.is_collapsed() {
+            self.split.set_show_sidebar(false);
+        }
+    }
+
     fn copy_selected(self: &Rc<Self>, field: Field) -> glib::Propagation {
         let Some(item) = self.list.selected() else { return glib::Propagation::Proceed };
         let field = match (&field, item.kind) {
@@ -835,18 +868,7 @@ impl MainWindow {
         let count = |f: &Filter| items.iter().filter(|i| f.matches(i)).count();
         let add_row =
             |filters: &mut Vec<Filter>, filter: Filter, icon: &str, text: &str, count: Option<usize>| {
-                let row = gtk::Box::new(gtk::Orientation::Horizontal, 10);
-                let image = gtk::Image::from_icon_name(icon);
-                image.add_css_class("cs-nav-icon");
-                row.append(&image);
-                let name = label(text, &[]);
-                name.set_hexpand(true);
-                name.set_ellipsize(gtk::pango::EllipsizeMode::End);
-                row.append(&name);
-                if let Some(count) = count {
-                    row.append(&label(&count.to_string(), &["cs-count"]));
-                }
-                self.sidebar.append(&row);
+                self.sidebar.append(&nav_row(icon, text, count));
                 filters.push(filter);
             };
         let add_title = |text: &str| {
@@ -902,16 +924,17 @@ impl MainWindow {
                 add_row(&mut filters, f, "user-bookmarks-symbolic", &collection.name, Some(n));
             }
         }
-        push_title(&mut filters, "");
+        let gap = gtk::ListBoxRow::builder()
+            .child(&gtk::Separator::new(gtk::Orientation::Horizontal))
+            .selectable(false)
+            .activatable(false)
+            .css_classes(["cs-nav-gap"])
+            .build();
+        self.sidebar.append(&gap);
+        filters.push(Filter::All);
         add_row(&mut filters, Filter::Trash, "user-trash-symbolic", "Trash", Some(vault.trash.len()));
-        push_title(&mut filters, "TOOLS");
-        add_row(&mut filters, Filter::Generator, "dialog-password-symbolic", "Generator", None);
-        add_row(&mut filters, Filter::Sends, "send-to-symbolic", "Send", None);
         *self.filters.borrow_mut() = filters;
-        let index = self.filters.borrow().iter().position(|f| *f == selected).unwrap_or(0);
-        if let Some(row) = self.sidebar.row_at_index(index as i32) {
-            self.sidebar.select_row(Some(&row));
-        }
+        self.show_vault_filter(selected);
     }
 
     fn refresh_list(&self) {
@@ -1069,9 +1092,17 @@ impl MainWindow {
         dialog.present(Some(&self.window));
     }
 
+    /// Selects the sidebar row for `filter`, which shows it. A filter no
+    /// longer listed, such as a deleted folder, falls back to all items.
     fn show_vault_filter(&self, filter: Filter) {
-        let index = self.filters.borrow().iter().position(|f| *f == filter);
-        if let Some(row) = index.and_then(|i| self.sidebar.row_at_index(i as i32)) {
+        if let Some(index) = TOOLS.iter().position(|(f, _, _)| *f == filter) {
+            if let Some(row) = self.tools.row_at_index(index as i32) {
+                self.tools.select_row(Some(&row));
+            }
+            return;
+        }
+        let index = self.filters.borrow().iter().position(|f| *f == filter).unwrap_or(0);
+        if let Some(row) = self.sidebar.row_at_index(index as i32) {
             self.sidebar.select_row(Some(&row));
         }
     }
@@ -1084,6 +1115,28 @@ impl MainWindow {
             (false, None) => String::new(),
         });
     }
+}
+
+/// The tool pages pinned below the sidebar's filters.
+const TOOLS: [(Filter, &str, &str); 2] = [
+    (Filter::Generator, "dialog-password-symbolic", "Generator"),
+    (Filter::Sends, "send-to-symbolic", "Send"),
+];
+
+/// A sidebar row: icon, name and an optional count.
+fn nav_row(icon: &str, text: &str, count: Option<usize>) -> gtk::Box {
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+    let image = gtk::Image::from_icon_name(icon);
+    image.add_css_class("cs-nav-icon");
+    row.append(&image);
+    let name = label(text, &[]);
+    name.set_hexpand(true);
+    name.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    row.append(&name);
+    if let Some(count) = count {
+        row.append(&label(&count.to_string(), &["cs-count"]));
+    }
+    row
 }
 
 /// The window actions that act on the open vault.

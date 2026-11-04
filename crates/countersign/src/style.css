@@ -50,6 +50,10 @@ list.cs-nav > row {
 list.cs-nav > row:hover { background-color: var(--cs-hover); }
 list.cs-nav > row:selected { background-color: var(--cs-selection); color: var(--cs-selection-fg); }
 list.cs-nav > row:selected .cs-count { color: var(--cs-selection-fg); }
+list.cs-nav > row.cs-nav-gap { min-height: 0; padding: 8px 12px; }
+list.cs-nav > row.cs-nav-gap:hover { background: none; }
+list.cs-nav > row.cs-nav-gap separator { background-color: var(--cs-line); }
+list.cs-tools { padding: 4px 0; border-top: 1px solid var(--cs-line); }
 .cs-nav-icon { color: var(--cs-dim); }
 .cs-count { font-size: 0.82em; color: var(--cs-muted); font-feature-settings: "tnum"; }
 
