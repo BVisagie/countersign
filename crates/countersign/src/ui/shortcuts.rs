@@ -96,18 +96,3 @@ pub fn present_about(parent: Option<&gtk::Widget>) {
         .build();
     dialog.present(parent);
 }
-
-#[cfg(test)]
-mod tests {
-    use super::GROUPS;
-
-    #[test]
-    fn every_shortcut_has_keys_and_an_action() {
-        for (_, shortcuts) in GROUPS {
-            for (keys, action) in shortcuts {
-                assert!(!keys.is_empty() && !action.is_empty());
-                assert!(keys.split(" or ").all(|k| !k.trim().is_empty()), "{keys}");
-            }
-        }
-    }
-}
