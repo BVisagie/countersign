@@ -4,13 +4,15 @@
 //! the fields this form shows, so anything Countersign does not edit, such
 //! as passkeys, password history or linked fields, is sent back unchanged.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::rc::Rc;
 
 use adw::prelude::*;
 use countersign_ipc::{GenerateOptions, ItemKind, Request, Response, VaultSnapshot};
 use gtk::glib;
 use serde_json::{Value, json};
+use zeroize::Zeroizing;
 
 use crate::app::App;
 
@@ -158,7 +160,12 @@ pub struct Editor {
     uri_add: RefCell<Option<adw::ButtonRow>>,
     field_add: RefCell<Option<adw::ButtonRow>>,
     error: gtk::Label,
-    save: gtk::Button,
+    /// Cancel and Save, for the pane's header bar.
+    pub cancel: gtk::Button,
+    pub save: gtk::Button,
+    pub heading: &'static str,
+    /// A fingerprint of the form as it opened, to tell whether it changed.
+    baseline: Cell<u64>,
 }
 
 impl Editor {
@@ -352,22 +359,14 @@ impl Editor {
             .label(if creating { "Create" } else { "Save" })
             .css_classes(["suggested-action"])
             .build();
-        let header = adw::HeaderBar::builder()
-            .title_widget(&super::label(if creating { "New item" } else { "Edit item" }, &["title"]))
-            .show_end_title_buttons(false)
-            .show_start_title_buttons(false)
-            .build();
-        header.pack_start(&cancel);
-        header.pack_end(&save);
+        cancel.set_tooltip_text(Some("Cancel (Esc)"));
+        save.set_tooltip_text(Some("Save (Ctrl+S)"));
         let column = gtk::Box::new(gtk::Orientation::Vertical, 0);
         column.append(&error);
         column.append(&page);
-        let view = adw::ToolbarView::new();
-        view.add_top_bar(&header);
-        view.set_content(Some(&column));
 
         let editor = Rc::new(Editor {
-            root: view.upcast(),
+            root: column.upcast(),
             app: app.clone(),
             original: item.clone(),
             creating,
@@ -391,7 +390,10 @@ impl Editor {
             uri_add: RefCell::default(),
             field_add: RefCell::default(),
             error,
+            cancel: cancel.clone(),
             save: save.clone(),
+            heading: if creating { "New item" } else { "Edit item" },
+            baseline: Cell::new(0),
         });
         for (original, row) in uris {
             editor.add_uri(original, row);
@@ -429,8 +431,12 @@ impl Editor {
         editor.fields_group.add(&add_field);
         *editor.field_add.borrow_mut() = Some(add_field);
         {
-            let on_done = editor.on_done.clone();
-            cancel.connect_clicked(move |_| on_done(None));
+            let weak = Rc::downgrade(&editor);
+            cancel.connect_clicked(move |_| {
+                if let Some(me) = weak.upgrade() {
+                    me.cancel();
+                }
+            });
         }
         {
             let weak = Rc::downgrade(&editor);
@@ -440,7 +446,44 @@ impl Editor {
                 }
             });
         }
+        editor.baseline.set(editor.fingerprint());
         editor
+    }
+
+    /// A hash of the item the form would save. The serialized item holds
+    /// secrets, so it is wiped once hashed.
+    fn fingerprint(&self) -> u64 {
+        let text = Zeroizing::new(serde_json::to_string(&self.build()).unwrap_or_default());
+        let mut hasher = DefaultHasher::new();
+        text.hash(&mut hasher);
+        hasher.finish()
+    }
+
+    /// Leaves the editor, first asking whether to discard any changes.
+    pub fn cancel(self: &Rc<Self>) {
+        if self.fingerprint() == self.baseline.get() {
+            (self.on_done)(None);
+            return;
+        }
+        let dialog = adw::AlertDialog::builder()
+            .heading("Discard changes?")
+            .body(if self.creating { "This item has not been created." } else { "Your edits are not saved." })
+            .close_response("keep")
+            .default_response("keep")
+            .build();
+        dialog.add_responses(&[("keep", "Keep editing"), ("discard", "Discard")]);
+        dialog.set_response_appearance("discard", adw::ResponseAppearance::Destructive);
+        let weak = Rc::downgrade(self);
+        dialog.connect_response(None, move |_, response| {
+            if response == "discard"
+                && let Some(me) = weak.upgrade()
+                // Locking may have closed the editor meanwhile.
+                && me.root.parent().is_some()
+            {
+                (me.on_done)(None);
+            }
+        });
+        dialog.present(Some(&self.root));
     }
 
     pub fn focus(&self) {
@@ -640,7 +683,10 @@ impl Editor {
         item
     }
 
-    fn save(self: &Rc<Self>) {
+    pub fn save(self: &Rc<Self>) {
+        if !self.save.is_sensitive() {
+            return;
+        }
         if self.name.text().trim().is_empty() {
             self.show_error("Give the item a name.");
             self.name.grab_focus();

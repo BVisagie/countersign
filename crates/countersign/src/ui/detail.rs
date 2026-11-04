@@ -21,8 +21,13 @@ const REVEAL_FOR: Duration = Duration::from_secs(60);
 
 pub struct Detail {
     pub root: gtk::Stack,
-    /// Edit and menu buttons for the pane's header bar.
-    pub actions: gtk::Box,
+    /// The pane's header bar: edit and menu buttons, or while editing the
+    /// editor's Cancel and Save.
+    pub header: adw::HeaderBar,
+    pub(super) actions: gtk::Box,
+    pub(super) header_start: gtk::Box,
+    pub(super) header_end: gtk::Box,
+    pub(super) header_title: gtk::Label,
     content: gtk::Box,
     pub(super) app: Rc<App>,
     pub(super) notify: Rc<dyn Fn(&str)>,
@@ -57,15 +62,27 @@ impl Detail {
         root.add_named(&empty, Some("empty"));
         root.add_named(&scroller, Some("item"));
         root.set_visible_child_name("empty");
-        let edit_button = icon_button("document-edit-symbolic", "Edit");
+        let edit_button = icon_button("document-edit-symbolic", "Edit (Ctrl+E)");
         let menu_button =
             gtk::MenuButton::builder().icon_name("view-more-symbolic").tooltip_text("More").build();
         let actions = gtk::Box::new(gtk::Orientation::Horizontal, 4);
         actions.append(&edit_button);
         actions.append(&menu_button);
+        let header_start = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        let header_end = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        let header_title = label("", &["title"]);
+        header_title.set_visible(false);
+        let header = adw::HeaderBar::builder().title_widget(&header_title).build();
+        header.pack_start(&header_start);
+        header.pack_end(&actions);
+        header.pack_end(&header_end);
         let detail = Rc::new(Detail {
             root,
+            header,
             actions,
+            header_start,
+            header_end,
+            header_title,
             content,
             app: app.clone(),
             notify,

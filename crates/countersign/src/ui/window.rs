@@ -389,10 +389,8 @@ impl MainWindow {
             Rc::new(move |message: &str| toasts.add_toast(adw::Toast::new(message)))
         };
         let detail = Detail::new(app, notify.clone());
-        let detail_header = adw::HeaderBar::builder().show_title(false).build();
-        detail_header.pack_end(&detail.actions);
         let detail_view = adw::ToolbarView::new();
-        detail_view.add_top_bar(&detail_header);
+        detail_view.add_top_bar(&detail.header);
         detail_view.set_content(Some(&detail.root));
         let detail_page = adw::NavigationPage::builder().title("Details").child(&detail_view).build();
 
@@ -573,6 +571,18 @@ impl MainWindow {
             self.window.add_action(&new_item);
         }
         action("new-folder", |me| me.ask_folder_name(None));
+        action("edit", |me| {
+            if me.content.visible_child_name().as_deref() == Some("vault")
+                && me.window.visible_dialog().is_none()
+                && !me.detail.is_editing()
+                && me.detail.can_edit()
+            {
+                me.detail.edit();
+                if me.nav.is_collapsed() {
+                    me.nav.set_show_content(true);
+                }
+            }
+        });
         action("generator", |me| me.show_vault_filter(Filter::Generator));
         action("sends", |me| me.show_vault_filter(Filter::Sends));
         action("focus-search", |me| {
@@ -589,6 +599,7 @@ impl MainWindow {
         self.app.gtk.set_accels_for_action("win.generator", &["<Control>g"]);
         self.app.gtk.set_accels_for_action("win.sends", &["<Control><Shift>s"]);
         self.app.gtk.set_accels_for_action("win.new-item::login", &["<Control>n"]);
+        self.app.gtk.set_accels_for_action("win.edit", &["<Control>e"]);
         {
             // Keep "Synced N minutes ago" current.
             let weak = weak.clone();
@@ -723,18 +734,32 @@ impl MainWindow {
             let weak = weak.clone();
             keys.connect_key_pressed(move |_, key, _, state| {
                 let Some(me) = weak.upgrade() else { return glib::Propagation::Proceed };
-                // Leave keys to an open dialog, such as the re-prompt, and to
-                // the editor, whose item may not be the list's selection.
+                // Leave keys to an open dialog, such as the re-prompt.
                 if me.stack.visible_child_name().as_deref() != Some("vault")
                     || me.content.visible_child_name().as_deref() != Some("vault")
                     || me.window.visible_dialog().is_some()
-                    || me.detail.is_editing()
                 {
                     return glib::Propagation::Proceed;
                 }
-                me.app.activity();
                 let ctrl = state.contains(gdk::ModifierType::CONTROL_MASK);
                 let in_search = me.search.has_focus() || me.search.focus_child().is_some();
+                // The editor takes only Esc and Ctrl+S: its item may not be
+                // the list's selection. Esc in the search still clears it.
+                if me.detail.is_editing() {
+                    me.app.activity();
+                    match key {
+                        gdk::Key::Escape if !ctrl && !in_search && !focus_in_popover(&me.window) => {
+                            me.detail.cancel_edit();
+                            return glib::Propagation::Stop;
+                        }
+                        gdk::Key::s | gdk::Key::S if ctrl => {
+                            me.detail.save_edit();
+                            return glib::Propagation::Stop;
+                        }
+                        _ => return glib::Propagation::Proceed,
+                    }
+                }
+                me.app.activity();
                 match key {
                     gdk::Key::Down | gdk::Key::Up if in_search && !ctrl => {
                         me.list.step(if key == gdk::Key::Down { 1 } else { -1 });
@@ -1140,8 +1165,8 @@ fn nav_row(icon: &str, text: &str, count: Option<usize>) -> gtk::Box {
 }
 
 /// The window actions that act on the open vault.
-const VAULT_ACTIONS: [&str; 8] =
-    ["lock", "sync", "sign-out", "new-item", "new-folder", "generator", "sends", "focus-search"];
+const VAULT_ACTIONS: [&str; 9] =
+    ["lock", "sync", "sign-out", "new-item", "new-folder", "edit", "generator", "sends", "focus-search"];
 
 /// The page the main window shows for `status`, given the page it shows
 /// now. While the vault opens, an unlock form on screen stays, busy; any
@@ -1168,6 +1193,13 @@ fn page_for(status: &Status, opening: bool, signing_out: bool, showing: Option<&
 
 fn focus_in_editable(window: &adw::ApplicationWindow) -> bool {
     gtk::prelude::GtkWindowExt::focus(window).is_some_and(|w| w.is::<gtk::Text>() || w.is::<gtk::Entry>())
+}
+
+/// Whether a popover, such as a drop-down's list, has the focus; Esc
+/// closes it rather than the editor.
+fn focus_in_popover(window: &adw::ApplicationWindow) -> bool {
+    gtk::prelude::GtkWindowExt::focus(window)
+        .is_some_and(|w| w.ancestor(gtk::Popover::static_type()).is_some())
 }
 
 fn has_text_selection(window: &adw::ApplicationWindow) -> bool {

@@ -90,6 +90,11 @@ impl Detail {
         self.current.borrow().clone()
     }
 
+    /// Whether the shown item can be edited: one is shown, not in the trash.
+    pub fn can_edit(&self) -> bool {
+        self.current.borrow().is_some() && self.edit_button.is_sensitive()
+    }
+
     /// Opens the editor for the shown item.
     pub fn edit(self: &Rc<Self>) {
         let Some(id) = self.current_id() else { return };
@@ -136,8 +141,12 @@ impl Detail {
         self.invalidate();
         self.root.add_named(&editor.root, Some("edit"));
         self.root.set_visible_child_name("edit");
-        // The editor has its own Cancel and Save.
+        // The editor's Cancel and Save take the place of the item's buttons.
         self.actions.set_visible(false);
+        self.header_start.append(&editor.cancel);
+        self.header_end.append(&editor.save);
+        self.header_title.set_label(editor.heading);
+        self.header_title.set_visible(true);
         if let Some(window) = super::window::current() {
             window.set_editing(true);
         }
@@ -145,10 +154,29 @@ impl Detail {
         *self.editor.borrow_mut() = Some(editor);
     }
 
+    /// Cancels the open editor, asking first if anything changed.
+    pub fn cancel_edit(&self) {
+        let editor = self.editor.borrow().clone();
+        if let Some(editor) = editor {
+            editor.cancel();
+        }
+    }
+
+    /// Saves the open editor.
+    pub fn save_edit(&self) {
+        let editor = self.editor.borrow().clone();
+        if let Some(editor) = editor {
+            editor.save();
+        }
+    }
+
     /// Leaves the editor, discarding unsaved changes.
     pub(super) fn close_editor(&self) {
         let Some(editor) = self.editor.borrow_mut().take() else { return };
         self.root.remove(&editor.root);
+        super::clear(&self.header_start);
+        super::clear(&self.header_end);
+        self.header_title.set_visible(false);
         self.actions.set_visible(true);
         if let Some(window) = super::window::current() {
             window.set_editing(false);
