@@ -200,76 +200,84 @@ impl Daemon {
             R::CreateItem { item } => {
                 self.touch();
                 validate_item(&item)?;
+                let change = self.begin_change().await;
                 let client = self.client().await?;
                 let created = client.create_item(&item).await.map_err(ipc_error)?;
-                self.changed(&client, Change::Item(&created)).await;
+                self.changed(&change, &client, Change::Item(&created)).await;
                 let (item, secret_fields) = redact(&created);
                 Ok(Response::Item { item, secret_fields })
             }
             R::EditItem { id, item } => {
                 self.touch();
                 validate_item(&item)?;
+                let change = self.begin_change().await;
                 let client = self.client().await?;
                 let current = self.read_item(&client, &id).await.map_err(ipc_error)?;
                 self.check_reprompt(&id, &current)?;
                 let known = self.knows_item(&id);
                 let edited =
                     self.on_known(known, || client.edit_item(&id, &item)).await.map_err(ipc_error)?;
-                self.changed(&client, Change::Item(&edited)).await;
+                self.changed(&change, &client, Change::Item(&edited)).await;
                 let (item, secret_fields) = redact(&edited);
                 Ok(Response::Item { item, secret_fields })
             }
             R::SetFavorite { id, favorite } => {
                 self.touch();
+                let change = self.begin_change().await;
                 let client = self.client().await?;
                 let mut item = self.read_item(&client, &id).await.map_err(ipc_error)?;
                 item["favorite"] = Value::from(favorite);
                 let known = self.knows_item(&id);
                 let edited =
                     self.on_known(known, || client.edit_item(&id, &item)).await.map_err(ipc_error)?;
-                self.changed(&client, Change::Item(&edited)).await;
+                self.changed(&change, &client, Change::Item(&edited)).await;
                 Ok(Response::Ok)
             }
             R::DeleteItem { id, permanent } => {
                 self.touch();
+                let change = self.begin_change().await;
                 let client = self.client().await?;
                 let known = self.knows_item(&id);
                 self.on_known(known, || client.delete_item(&id, permanent)).await.map_err(ipc_error)?;
-                let change = if permanent { Change::Deleted(id) } else { Change::Trashed(id) };
-                self.changed(&client, change).await;
+                let left = if permanent { Change::Deleted(id) } else { Change::Trashed(id) };
+                self.changed(&change, &client, left).await;
                 Ok(Response::Ok)
             }
             R::RestoreItem { id } => {
                 self.touch();
+                let change = self.begin_change().await;
                 let client = self.client().await?;
                 let known = self.knows_item(&id);
                 self.on_known(known, || client.restore_item(&id)).await.map_err(ipc_error)?;
-                self.changed(&client, Change::Restored(id)).await;
+                self.changed(&change, &client, Change::Restored(id)).await;
                 Ok(Response::Ok)
             }
             R::CreateFolder { name } => {
                 let name = folder_name(&name)?;
+                let change = self.begin_change().await;
                 let client = self.client().await?;
                 let folder = client.create_folder(name).await.map_err(ipc_error)?;
                 if let Some(id) = folder["id"].as_str() {
-                    self.changed(&client, Change::Folder(id.to_owned(), Some(&folder))).await;
+                    self.changed(&change, &client, Change::Folder(id.to_owned(), Some(&folder))).await;
                 }
                 Ok(Response::Json { value: folder })
             }
             R::RenameFolder { id, name } => {
                 let name = folder_name(&name)?;
+                let change = self.begin_change().await;
                 let client = self.client().await?;
                 let known = self.knows_folder(&id);
                 let folder =
                     self.on_known(known, || client.edit_folder(&id, name)).await.map_err(ipc_error)?;
-                self.changed(&client, Change::Folder(id, Some(&folder))).await;
+                self.changed(&change, &client, Change::Folder(id, Some(&folder))).await;
                 Ok(Response::Json { value: folder })
             }
             R::DeleteFolder { id } => {
+                let change = self.begin_change().await;
                 let client = self.client().await?;
                 let known = self.knows_folder(&id);
                 self.on_known(known, || client.delete_folder(&id)).await.map_err(ipc_error)?;
-                self.changed(&client, Change::Folder(id, None)).await;
+                self.changed(&change, &client, Change::Folder(id, None)).await;
                 Ok(Response::Ok)
             }
             R::MoveItem { id, organization_id, collection_ids } => {
@@ -277,13 +285,14 @@ impl Daemon {
                 if collection_ids.is_empty() {
                     return Err(invalid("Choose at least one collection."));
                 }
+                let change = self.begin_change().await;
                 let client = self.client().await?;
                 let known = self.knows_item(&id);
                 let moved = self
                     .on_known(known, || client.move_item(&id, &organization_id, &collection_ids))
                     .await
                     .map_err(ipc_error)?;
-                self.changed(&client, Change::Item(&moved)).await;
+                self.changed(&change, &client, Change::Item(&moved)).await;
                 let (item, secret_fields) = redact(&moved);
                 Ok(Response::Item { item, secret_fields })
             }
@@ -291,24 +300,26 @@ impl Daemon {
                 self.touch();
                 let data = read_user_file(&path).await?;
                 let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("attachment").to_owned();
+                let change = self.begin_change().await;
                 let client = self.client().await?;
                 let known = self.knows_item(&item_id);
                 let item = self
                     .on_known(known, || client.create_attachment(&item_id, &name, &data))
                     .await
                     .map_err(ipc_error)?;
-                self.changed(&client, Change::Item(&item)).await;
+                self.changed(&change, &client, Change::Item(&item)).await;
                 let (item, secret_fields) = redact(&item);
                 Ok(Response::Item { item, secret_fields })
             }
             R::DeleteAttachment { item_id, attachment_id } => {
                 self.touch();
+                let change = self.begin_change().await;
                 let client = self.client().await?;
                 let known = self.knows_item(&item_id);
                 self.on_known(known, || client.delete_attachment(&item_id, &attachment_id))
                     .await
                     .map_err(ipc_error)?;
-                self.changed(&client, Change::AttachmentDeleted(item_id)).await;
+                self.changed(&change, &client, Change::AttachmentDeleted(item_id)).await;
                 Ok(Response::Ok)
             }
             R::Sends => {

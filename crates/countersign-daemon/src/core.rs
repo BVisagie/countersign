@@ -17,7 +17,7 @@ use countersign_bw::{
 };
 use countersign_ipc::{
     Account, CliState, ClipboardEvent, ClipboardState, Collection, ErrorCode, Event, Folder, IpcError,
-    ItemSummary, Organization, Settings, Status, VaultSnapshot, VaultState, summarize,
+    Organization, Settings, Status, VaultSnapshot, VaultState, summarize,
 };
 use secrecy::SecretString;
 use serde_json::Value;
@@ -26,7 +26,7 @@ use tokio::task::JoinHandle;
 
 use crate::clipboard::Clipboard;
 use crate::paths::{Paths, ensure_private_dir};
-use crate::unlisted::{Known, Unlisted};
+use crate::unlisted::Unlisted;
 
 /// How long a re-prompted item stays available without asking again.
 const REPROMPT_GRANT: Duration = Duration::from_secs(300);
@@ -104,6 +104,9 @@ pub struct Daemon {
     pub(crate) ops: tokio::sync::Mutex<()>,
     /// Serializes rebuilding the vault index.
     rebuild: tokio::sync::Mutex<()>,
+    /// Serializes changes to the vault, so what each left is recorded in
+    /// the order the CLI made them. The CLI answers one request at a time.
+    changes: tokio::sync::Mutex<()>,
     cli: Mutex<Option<Cli>>,
     /// The last executable whose version passed, so `bw --version` runs once
     /// per file rather than on every refresh.
@@ -145,6 +148,7 @@ impl Daemon {
             settings: watch::channel(settings).0,
             ops: tokio::sync::Mutex::new(()),
             rebuild: tokio::sync::Mutex::new(()),
+            changes: tokio::sync::Mutex::new(()),
             cli: Mutex::new(None),
             checked_version: Mutex::new(None),
             session: Mutex::new(None),
@@ -845,14 +849,6 @@ impl Daemon {
         self.on_known(self.knows_item(id), || client.get_item(id)).await
     }
 
-    /// The index's entry for an item, changed as a change left it.
-    fn indexed(&self, id: &str, change: impl FnOnce(&mut ItemSummary)) -> Option<Known> {
-        let vault = self.vault.lock().expect("vault").clone();
-        let mut item = vault.items.iter().chain(&vault.trash).find(|i| i.id == id)?.clone();
-        change(&mut item);
-        Some(Known::Item(item.id.clone(), Some(item)))
-    }
-
     pub(crate) fn knows_item(&self, id: &str) -> bool {
         let vault = self.vault.lock().expect("vault").clone();
         vault.items.iter().chain(&vault.trash).any(|i| i.id == id)
@@ -870,7 +866,7 @@ impl Daemon {
         let mark = self.unlisted.lock().expect("unlisted").mark();
         let result = async {
             client.sync().await?;
-            self.unlisted.lock().expect("unlisted").forget_folders_before(mark);
+            self.unlisted.lock().expect("unlisted").forget_before(mark);
             self.rebuild(&client, epoch).await?;
             client.status().await
         }
@@ -894,41 +890,64 @@ impl Daemon {
         }
     }
 
+    /// Starts a change to the vault: waits for any other change to finish
+    /// and notes the session it belongs to.
+    pub(crate) async fn begin_change(&self) -> ChangeGuard<'_> {
+        let lock = self.changes.lock().await;
+        ChangeGuard { _lock: lock, epoch: self.epoch() }
+    }
+
     /// Rebuilds the index after a change and tells the app. What the change
     /// left is kept for the index first, because the CLI's lists can be
     /// behind; see `unlisted`.
-    pub(crate) async fn changed(&self, client: &ServeClient, change: Change<'_>) {
-        let epoch = self.epoch();
-        let known = match change {
-            Change::Item(item) => {
-                summarize(item).map(|summary| Known::Item(summary.id.clone(), Some(summary)))
-            }
-            // Reading the item back can be behind too, so these follow from
-            // the index.
-            Change::Trashed(id) => self.indexed(&id, |i| i.deleted = true),
-            Change::Restored(id) => self.indexed(&id, |i| i.deleted = false),
-            Change::AttachmentDeleted(id) => {
-                self.indexed(&id, |i| i.attachments = i.attachments.saturating_sub(1))
-            }
-            Change::Deleted(id) => Some(Known::Item(id, None)),
-            Change::Folder(id, folder) => {
-                let folder = folder.and_then(|f| {
-                    Some(Folder { id: f["id"].as_str()?.to_owned(), name: f["name"].as_str()?.to_owned() })
-                });
-                Some(Known::Folder(id, folder))
-            }
-        };
-        if let Some(known) = known {
-            let _slot = self.session.lock().expect("session");
-            if self.epoch() == epoch {
-                self.unlisted.lock().expect("unlisted").record(known);
-            }
-        }
-        if let Err(e) = self.rebuild(client, epoch).await {
+    pub(crate) async fn changed(&self, guard: &ChangeGuard<'_>, client: &ServeClient, change: Change<'_>) {
+        self.record(guard, change);
+        if let Err(e) = self.rebuild(client, guard.epoch).await {
             tracing::warn!("refreshing the vault index failed: {e}");
         }
         self.emit(Event::VaultChanged);
     }
+
+    /// Keeps what a change left, unless its session has ended since it
+    /// started.
+    fn record(&self, guard: &ChangeGuard<'_>, change: Change<'_>) {
+        let slot = self.session.lock().expect("session");
+        if slot.is_none() || self.epoch() != guard.epoch {
+            return;
+        }
+        let indexed = |id: &str| {
+            let vault = self.vault.lock().expect("vault").clone();
+            vault.items.iter().chain(&vault.trash).find(|i| i.id == id).cloned()
+        };
+        let mut unlisted = self.unlisted.lock().expect("unlisted");
+        match change {
+            Change::Item(item) => {
+                if let Some(summary) = summarize(item) {
+                    unlisted.item(summary.id.clone(), Some(summary));
+                }
+            }
+            // Reading the item back can be behind too, so these follow from
+            // what is known already.
+            Change::Trashed(id) => unlisted.derive(&id, indexed(&id).as_ref(), |i| i.deleted = true),
+            Change::Restored(id) => unlisted.derive(&id, indexed(&id).as_ref(), |i| i.deleted = false),
+            Change::AttachmentDeleted(id) => unlisted.derive(&id, indexed(&id).as_ref(), |i| {
+                i.attachments = i.attachments.saturating_sub(1);
+            }),
+            Change::Deleted(id) => unlisted.item(id, None),
+            Change::Folder(id, folder) => {
+                let folder = folder.and_then(|f| {
+                    Some(Folder { id: f["id"].as_str()?.to_owned(), name: f["name"].as_str()?.to_owned() })
+                });
+                unlisted.folder(id, folder);
+            }
+        }
+    }
+}
+
+/// A change to the vault in progress; see `Daemon::begin_change`.
+pub(crate) struct ChangeGuard<'a> {
+    _lock: tokio::sync::MutexGuard<'a, ()>,
+    epoch: u64,
 }
 
 /// What a change left behind, for the index; see `unlisted`.

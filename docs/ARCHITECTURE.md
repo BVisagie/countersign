@@ -55,8 +55,10 @@ the latest change: an edited item keeps its old name, a renamed folder its
 old name, a new one is missing. The list stays behind until a later change
 or a sync, and reading an item back can be behind for a moment too. So the
 daemon keeps what each change left, from the change's reply or, for the
-trash and attachments, from its own index, and lays it over every list
-until the list catches up. A newer revision from elsewhere wins.
+trash and attachments, from what it knew already, and lays it over every
+list until the list shows it. Changes from other devices arrive only
+through a sync, so a sync retires what came before it. Changes run one at a
+time, and one still running when the vault locks leaves nothing behind.
 `crates/countersign-daemon/src/contract.rs` checks this against the real
 CLI.
 
