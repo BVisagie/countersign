@@ -242,6 +242,7 @@ pub struct MainWindow {
     list_stack: gtk::Stack,
     list_meta: gtk::Label,
     empty: adw::StatusPage,
+    search_all: gtk::Button,
     pub detail: Rc<Detail>,
     detail_page: adw::NavigationPage,
     pub nav: adw::NavigationSplitView,
@@ -387,7 +388,17 @@ impl MainWindow {
         let list_column = gtk::Box::new(gtk::Orientation::Vertical, 0);
         list_column.append(&list_meta);
         list_column.append(&list_scroll);
-        let empty = adw::StatusPage::builder().icon_name("edit-find-symbolic").title("No matches").build();
+        // Search covers the filter the sidebar shows; this widens it.
+        let search_all = gtk::Button::builder()
+            .label("Search all items")
+            .css_classes(["pill"])
+            .halign(gtk::Align::Center)
+            .build();
+        let empty = adw::StatusPage::builder()
+            .icon_name("edit-find-symbolic")
+            .title("No matches")
+            .child(&search_all)
+            .build();
         empty.add_css_class("compact");
         let list_stack = gtk::Stack::new();
         list_stack.add_named(&list_column, Some("list"));
@@ -518,6 +529,7 @@ impl MainWindow {
             list_stack,
             list_meta,
             empty,
+            search_all,
             detail,
             detail_page,
             nav,
@@ -691,6 +703,16 @@ impl MainWindow {
                 if let Some((filter, _, _)) = TOOLS.get(row.index() as usize) {
                     me.sidebar.unselect_all();
                     me.apply_filter(filter.clone());
+                }
+            });
+        }
+        {
+            let weak = weak.clone();
+            self.search_all.connect_clicked(move |_| {
+                if let Some(me) = weak.upgrade() {
+                    me.show_vault_filter(Filter::All);
+                    me.search.grab_focus();
+                    me.search.set_position(-1);
                 }
             });
         }
@@ -1053,12 +1075,16 @@ impl MainWindow {
             format!("{} of {total} match “{}”", shown.len(), query.trim())
         });
         if shown.is_empty() {
+            let narrowed = !query.is_empty() && filter != Filter::All;
             self.empty.set_title(if query.is_empty() { "Nothing here yet" } else { "No matches" });
             self.empty.set_description(Some(if query.is_empty() {
                 "Items you add in this category appear here."
-            } else {
+            } else if narrowed {
                 "Try fewer letters, or search all items."
+            } else {
+                "Try fewer letters."
             }));
+            self.search_all.set_visible(narrowed);
             self.list_stack.set_visible_child_name("empty");
         } else {
             self.list_stack.set_visible_child_name("list");
