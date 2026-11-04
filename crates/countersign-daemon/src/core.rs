@@ -12,7 +12,8 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
 
 use countersign_bw::{
-    AuthStatus, BwError, Cli, CliVersion, ListOptions, PINNED_VERSION, Serve, ServeClient, SessionKey,
+    AuthStatus, BwError, Cli, CliVersion, ListOptions, PINNED_VERSION, PinnedArchive, Serve, ServeClient,
+    SessionKey,
 };
 use countersign_ipc::{
     Account, CliState, ClipboardEvent, ClipboardState, Collection, ErrorCode, Event, Folder, IpcError,
@@ -279,7 +280,11 @@ impl Daemon {
         };
         let cli = Cli::new(path, &self.paths.profile_dir);
         let cli_state = match self.version(&cli).await {
-            Ok(version) => CliState::Ready { version: version.to_string(), managed },
+            Ok(version) => CliState::Ready {
+                version: version.to_string(),
+                managed,
+                update: offered_update(version, managed).map(|v| v.to_string()),
+            },
             Err(BwError::CliMissing(_)) => CliState::Missing,
             Err(BwError::Unsupported { found, minimum }) => {
                 CliState::Unsupported { found, minimum: minimum.to_string() }
@@ -350,8 +355,11 @@ impl Daemon {
 
     // ----- Unlocking and locking ---------------------------------------
 
-    /// Starts the CLI so an unlock does not wait for it.
+    /// Starts the CLI so an unlock does not wait for it. Runs under `ops`,
+    /// so it never starts a CLI that an install or a change of CLI is
+    /// replacing.
     pub async fn prepare_unlock(&self) -> Result<(), IpcError> {
+        let _op = self.ops.lock().await;
         if self.status().vault != VaultState::Locked {
             return Ok(());
         }
@@ -557,6 +565,23 @@ impl Daemon {
 
     /// Locks immediately. Safe to call from any task, any number of times.
     pub async fn lock(&self, reason: LockReason) {
+        let was_unlocked = self.stop_session().await;
+        // An unlock or restart in flight now fails; let it finish cleaning
+        // up before reporting the vault locked.
+        let _ = tokio::time::timeout(Duration::from_secs(2), self.ops.lock()).await;
+        self.report_locked(was_unlocked, reason);
+    }
+
+    /// Locks from inside an operation, which already holds `ops`, so no
+    /// unlock can be in flight.
+    pub(crate) async fn lock_within_op(&self, reason: LockReason) {
+        let was_unlocked = self.stop_session().await;
+        self.report_locked(was_unlocked, reason);
+    }
+
+    /// Ends the session and stops every CLI it started. Returns whether the
+    /// vault was open.
+    async fn stop_session(&self) -> bool {
         let (session, opening, prepared) = {
             let mut slot = self.session.lock().expect("session");
             self.epoch.fetch_add(1, Ordering::SeqCst);
@@ -603,9 +628,10 @@ impl Daemon {
         if let Some((serve, _)) = prepared {
             serve.shutdown().await;
         }
-        // An unlock or restart in flight now fails; let it finish cleaning
-        // up before reporting the vault locked.
-        let _ = tokio::time::timeout(Duration::from_secs(2), self.ops.lock()).await;
+        was_unlocked
+    }
+
+    fn report_locked(&self, was_unlocked: bool, reason: LockReason) {
         if was_unlocked {
             tracing::info!("vault locked ({reason:?})");
             self.emit(Event::VaultChanged);
@@ -829,6 +855,13 @@ impl Daemon {
     }
 }
 
+/// The pinned release, when Countersign installed `version` itself, it is
+/// older than the pin and Bitwarden publishes the pin for this machine.
+fn offered_update(version: CliVersion, managed: bool) -> Option<CliVersion> {
+    (managed && version < PINNED_VERSION && PinnedArchive::for_this_machine().is_some())
+        .then_some(PINNED_VERSION)
+}
+
 fn locked_while_opening() -> IpcError {
     IpcError::new(ErrorCode::Locked, "The vault was locked while it was opening.")
 }
@@ -971,5 +1004,80 @@ esac
 
         daemon.handle(countersign_ipc::Request::Refresh).await.unwrap();
         assert!(calls().ends_with("status\n--version\nstatus\n"));
+    }
+
+    /// Settings offers the pinned release only in place of an older copy
+    /// Countersign installed, never over a CLI you chose.
+    #[tokio::test]
+    async fn offers_the_pin_only_over_an_older_managed_copy() {
+        use countersign_bw::MINIMUM_VERSION;
+        use std::os::unix::fs::PermissionsExt;
+        let (daemon, root) = daemon();
+        let older = MINIMUM_VERSION.to_string();
+        let script = format!(
+            "#!/bin/sh\ncase \"$1\" in\n--version) echo {older} ;;\nstatus) echo '{{\"status\":\"unauthenticated\"}}' ;;\nesac\n"
+        );
+        let bw = daemon.paths.managed_cli(&older);
+        std::fs::create_dir_all(bw.parent().unwrap()).unwrap();
+        std::fs::write(&bw, &script).unwrap();
+        std::fs::set_permissions(&bw, std::fs::Permissions::from_mode(0o700)).unwrap();
+
+        daemon.refresh().await;
+        let expected = (MINIMUM_VERSION < PINNED_VERSION && PinnedArchive::for_this_machine().is_some())
+            .then(|| PINNED_VERSION.to_string());
+        assert_eq!(
+            daemon.status().cli,
+            CliState::Ready { version: older.clone(), managed: true, update: expected }
+        );
+
+        let own = root.path().join("bw");
+        std::fs::write(&own, &script).unwrap();
+        std::fs::set_permissions(&own, std::fs::Permissions::from_mode(0o700)).unwrap();
+        daemon.set_settings(Settings { cli_path: Some(own), ..Settings::default() });
+        daemon.refresh().await;
+        assert_eq!(daemon.status().cli, CliState::Ready { version: older, managed: false, update: None });
+    }
+
+    /// An operation that locks does not wait for itself to finish.
+    #[tokio::test]
+    async fn locking_within_an_operation_does_not_wait_for_it() {
+        let (daemon, _root) = daemon();
+        daemon.update_status(|s| s.vault = VaultState::Unlocking);
+        let _op = daemon.ops.lock().await;
+        let started = Instant::now();
+        daemon.lock_within_op(LockReason::Requested).await;
+        assert!(started.elapsed() < Duration::from_secs(1));
+        assert_eq!(daemon.status().vault, VaultState::Locked);
+    }
+
+    /// The locked page asks for a CLI as soon as an install locks the
+    /// vault. It waits for the install to switch CLIs and starts the new
+    /// one, never the copy being replaced.
+    #[tokio::test]
+    async fn preparing_waits_for_a_cli_switch() {
+        use std::os::unix::fs::PermissionsExt;
+        let (daemon, root) = daemon();
+        let fake = |name: &str| {
+            let bw = root.path().join(name);
+            let log = root.path().join("started");
+            std::fs::write(&bw, format!("#!/bin/sh\necho {name} >> {}\n", log.display())).unwrap();
+            std::fs::set_permissions(&bw, std::fs::Permissions::from_mode(0o700)).unwrap();
+            Cli::new(&bw, root.path().join("profile"))
+        };
+        *daemon.cli.lock().unwrap() = Some(fake("old"));
+        daemon.update_status(|s| s.vault = VaultState::Locked);
+
+        let op = daemon.ops.lock().await;
+        let preparing = tokio::spawn({
+            let daemon = daemon.clone();
+            async move { daemon.prepare_unlock().await }
+        });
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        *daemon.cli.lock().unwrap() = Some(fake("new"));
+        drop(op);
+        // The fake CLI exits at once, so starting it fails; only which one
+        // started matters.
+        let _ = preparing.await.unwrap();
+        assert_eq!(std::fs::read_to_string(root.path().join("started")).unwrap(), "new\n");
     }
 }

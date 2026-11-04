@@ -25,7 +25,7 @@ fn wrap(widget: &impl IsA<gtk::Widget>) -> gtk::Widget {
 }
 
 /// A button whose label makes room for a spinner while its work runs.
-fn busy_button(text: &str, classes: &[&str]) -> gtk::Button {
+pub(super) fn busy_button(text: &str, classes: &[&str]) -> gtk::Button {
     let content = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     content.set_halign(gtk::Align::Center);
     content.append(&gtk::Label::new(Some(text)));
@@ -33,7 +33,7 @@ fn busy_button(text: &str, classes: &[&str]) -> gtk::Button {
 }
 
 /// Shows or hides the spinner in a [`busy_button`].
-fn set_button_busy(button: &gtk::Button, busy: bool) {
+pub(super) fn set_button_busy(button: &gtk::Button, busy: bool) {
     let Some(content) = button.child().and_downcast::<gtk::Box>() else { return };
     match (busy, content.first_child().and_downcast::<adw::Spinner>()) {
         (true, None) => content.prepend(&adw::Spinner::new()),
