@@ -5,6 +5,11 @@
 //! anything is extracted. The extracted `bw` must report exactly the pinned
 //! version in an empty profile before it replaces anything. It never touches
 //! a system package or a CLI you configured yourself.
+//!
+//! When a Countersign update raises the pin, the same request installs the
+//! new release over the old one. The download and checks run while the vault
+//! stays open; only the switch locks it. Older releases Countersign installed
+//! are then removed.
 
 use std::fs;
 use std::io::{self, Write};
@@ -13,12 +18,12 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use countersign_bw::{Cli, PINNED_VERSION, PinnedArchive};
+use countersign_bw::{Cli, CliVersion, PINNED_VERSION, PinnedArchive};
 use countersign_ipc::{CliState, ErrorCode, IpcError};
 use futures_util::StreamExt;
 use sha2::{Digest, Sha256};
 
-use crate::core::Daemon;
+use crate::core::{Daemon, LockReason};
 use crate::paths::ensure_private_dir;
 
 /// Larger than any official archive; a bigger download is refused.
@@ -32,13 +37,30 @@ fn failed(message: impl Into<String>) -> IpcError {
 
 pub async fn install(daemon: &Arc<Daemon>) -> Result<(), IpcError> {
     let _op = daemon.ops.lock().await;
-    if let CliState::Ready { version, managed: true } = &daemon.status().cli
+    let current = daemon.status().cli;
+    if let CliState::Ready { version, managed: true, .. } = &current
         && *version == PINNED_VERSION.to_string()
     {
         return Ok(());
     }
-    daemon.update_status(|s| s.cli = CliState::Installing);
-    let result = run(&daemon.paths.managed_cli_root).await;
+    // A working CLI keeps the vault usable while the new one downloads.
+    let first = !matches!(current, CliState::Ready { .. });
+    if first {
+        daemon.update_status(|s| s.cli = CliState::Installing);
+    }
+    let root = &daemon.paths.managed_cli_root;
+    let staged = match fetch(root).await {
+        Ok(staged) => staged,
+        Err(e) => {
+            tracing::warn!("installing the Bitwarden CLI failed: {}", e.message);
+            daemon.refresh().await;
+            return Err(e);
+        }
+    };
+    // Nothing may keep running the copy being replaced, nor start from it at
+    // the next unlock, so lock as choosing another CLI does.
+    daemon.lock_within_op(LockReason::Requested).await;
+    let result = place(root, staged);
     match &result {
         // Installing means using the managed CLI, even over a custom path.
         Ok(()) if daemon.settings().cli_path.is_some() => {
@@ -55,10 +77,22 @@ pub async fn install(daemon: &Arc<Daemon>) -> Result<(), IpcError> {
         Err(e) => tracing::warn!("installing the Bitwarden CLI failed: {}", e.message),
     }
     daemon.refresh().await;
+    if result.is_ok() {
+        remove_older(root);
+    }
     result
 }
 
-async fn run(root: &Path) -> Result<(), IpcError> {
+/// A downloaded, checked release, not yet in place.
+struct Staged {
+    /// Removed with everything left in it when dropped.
+    dir: tempfile::TempDir,
+    binary: PathBuf,
+}
+
+/// Downloads the pinned release into a staging folder under `root` and
+/// checks its checksum and version. Changes nothing outside that folder.
+async fn fetch(root: &Path) -> Result<Staged, IpcError> {
     let archive = PinnedArchive::for_this_machine()
         .ok_or_else(|| failed(format!("Bitwarden publishes no CLI for {} Linux.", std::env::consts::ARCH)))?;
     ensure_private_dir(root).map_err(|e| failed(e.to_string()))?;
@@ -91,12 +125,17 @@ async fn run(root: &Path) -> Result<(), IpcError> {
     if version != PINNED_VERSION {
         return Err(failed(format!("The downloaded CLI reports {version}, not {PINNED_VERSION}.")));
     }
+    Ok(Staged { dir: staging, binary })
+}
 
+/// Moves a checked release into `root`, replacing any copy of the same
+/// release, and puts the old copy back if that fails.
+fn place(root: &Path, staged: Staged) -> Result<(), IpcError> {
     let target_dir = root.join(PINNED_VERSION.to_string());
-    let next = staging.path().join("release");
+    let next = staged.dir.path().join("release");
     fs::DirBuilder::new().mode(0o700).create(&next).map_err(|e| failed(e.to_string()))?;
-    fs::rename(&binary, next.join("bw")).map_err(|e| failed(e.to_string()))?;
-    let old = staging.path().join("previous");
+    fs::rename(&staged.binary, next.join("bw")).map_err(|e| failed(e.to_string()))?;
+    let old = staged.dir.path().join("previous");
     if target_dir.exists() {
         fs::rename(&target_dir, &old).map_err(|e| failed(e.to_string()))?;
     }
@@ -109,6 +148,23 @@ async fn run(root: &Path) -> Result<(), IpcError> {
     }
     tracing::info!("installed the official Bitwarden CLI {PINNED_VERSION}");
     Ok(())
+}
+
+/// Removes the other releases Countersign installed before, once the pinned
+/// one is in use. A copy that cannot be removed is only logged.
+fn remove_older(root: &Path) {
+    let Ok(entries) = fs::read_dir(root) else { return };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(version) = name.to_str().and_then(CliVersion::parse) else { continue };
+        if version == PINNED_VERSION || !entry.file_type().is_ok_and(|t| t.is_dir()) {
+            continue;
+        }
+        match fs::remove_dir_all(entry.path()) {
+            Ok(()) => tracing::info!("removed the Bitwarden CLI {version} Countersign installed before"),
+            Err(e) => tracing::warn!("removing the Bitwarden CLI {version}: {e}"),
+        }
+    }
 }
 
 /// Streams the archive to `path`, returning its SHA-256 in hex.
@@ -197,4 +253,37 @@ fn extract_bw(zip_path: &Path, binary: &PathBuf) -> Result<(), IpcError> {
         return Err(failed("The CLI executable is larger than expected."));
     }
     out.sync_all().map_err(|e| failed(e.to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn release(root: &Path, version: &str, contents: &str) {
+        fs::create_dir_all(root.join(version)).unwrap();
+        fs::write(root.join(version).join("bw"), contents).unwrap();
+    }
+
+    /// The checked release replaces any copy of the pin, and afterwards
+    /// only the pin is left; files that are not releases stay.
+    #[test]
+    fn switching_keeps_only_the_pinned_release() {
+        let root = tempfile::tempdir().unwrap();
+        let root = root.path();
+        release(root, "2026.10.0", "old");
+        release(root, &PINNED_VERSION.to_string(), "stale");
+        fs::create_dir(root.join("notes")).unwrap();
+
+        let dir = tempfile::Builder::new().prefix(".install-").tempdir_in(root).unwrap();
+        let binary = dir.path().join("bw");
+        fs::write(&binary, "new").unwrap();
+        place(root, Staged { dir, binary }).unwrap();
+        remove_older(root);
+
+        let mut left: Vec<String> =
+            fs::read_dir(root).unwrap().map(|e| e.unwrap().file_name().into_string().unwrap()).collect();
+        left.sort();
+        assert_eq!(left, [PINNED_VERSION.to_string(), "notes".to_owned()]);
+        assert_eq!(fs::read_to_string(root.join(PINNED_VERSION.to_string()).join("bw")).unwrap(), "new");
+    }
 }

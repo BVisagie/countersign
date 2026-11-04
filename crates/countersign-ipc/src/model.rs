@@ -210,10 +210,22 @@ pub struct VaultSnapshot {
 pub enum CliState {
     Checking,
     Missing,
-    Unsupported { found: String, minimum: String },
+    Unsupported {
+        found: String,
+        minimum: String,
+    },
     Installing,
-    Ready { version: String, managed: bool },
-    Failed { message: String },
+    Ready {
+        version: String,
+        managed: bool,
+        /// The release Countersign would install in place of an older copy
+        /// it installed itself. `None` for a CLI you chose.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        update: Option<String>,
+    },
+    Failed {
+        message: String,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -390,6 +402,22 @@ impl GenerateOptions {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    /// An app and daemon either side of the `update` field still
+    /// understand each other's status.
+    #[test]
+    fn cli_ready_reads_with_or_without_an_update() {
+        let older = json!({"state": "ready", "version": "2026.10.1", "managed": true});
+        let ready: CliState = serde_json::from_value(older.clone()).unwrap();
+        assert_eq!(ready, CliState::Ready { version: "2026.10.1".into(), managed: true, update: None });
+        assert_eq!(serde_json::to_value(&ready).unwrap(), older);
+
+        let newer =
+            CliState::Ready { version: "2026.10.1".into(), managed: true, update: Some("2026.11.0".into()) };
+        let text = serde_json::to_value(&newer).unwrap();
+        assert_eq!(text["update"], "2026.11.0");
+        assert_eq!(serde_json::from_value::<CliState>(text).unwrap(), newer);
+    }
 
     #[test]
     fn summarizes_logins_without_secrets() {
