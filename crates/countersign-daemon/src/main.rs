@@ -5,6 +5,8 @@
 //! sleep. The app starts it on demand; it exits once nothing needs it.
 
 mod clipboard;
+#[cfg(test)]
+mod contract;
 mod copy;
 mod core;
 mod handlers;
@@ -15,6 +17,7 @@ mod paths;
 mod server;
 mod settings;
 mod triggers;
+mod unlisted;
 
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::process::ExitCode;

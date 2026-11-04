@@ -26,6 +26,7 @@ use tokio::task::JoinHandle;
 
 use crate::clipboard::Clipboard;
 use crate::paths::{Paths, ensure_private_dir};
+use crate::unlisted::Unlisted;
 
 /// How long a re-prompted item stays available without asking again.
 const REPROMPT_GRANT: Duration = Duration::from_secs(300);
@@ -103,6 +104,9 @@ pub struct Daemon {
     pub(crate) ops: tokio::sync::Mutex<()>,
     /// Serializes rebuilding the vault index.
     rebuild: tokio::sync::Mutex<()>,
+    /// Serializes changes to the vault, so what each left is recorded in
+    /// the order the CLI made them. The CLI answers one request at a time.
+    changes: tokio::sync::Mutex<()>,
     cli: Mutex<Option<Cli>>,
     /// The last executable whose version passed, so `bw --version` runs once
     /// per file rather than on every refresh.
@@ -113,6 +117,8 @@ pub struct Daemon {
     prepared: Mutex<Option<(Serve, Instant)>>,
     epoch: Arc<AtomicU64>,
     vault: Mutex<Arc<VaultSnapshot>>,
+    /// Changes the CLI's lists may not show yet; see `unlisted`.
+    unlisted: Mutex<Unlisted>,
     pub(crate) clipboard: Arc<Clipboard>,
     pub(crate) copy_timers: Mutex<CopyTimers>,
     /// Orders clipboard events: a copy announces itself, and a timer checks
@@ -142,6 +148,7 @@ impl Daemon {
             settings: watch::channel(settings).0,
             ops: tokio::sync::Mutex::new(()),
             rebuild: tokio::sync::Mutex::new(()),
+            changes: tokio::sync::Mutex::new(()),
             cli: Mutex::new(None),
             checked_version: Mutex::new(None),
             session: Mutex::new(None),
@@ -149,6 +156,7 @@ impl Daemon {
             prepared: Mutex::new(None),
             epoch: Arc::new(AtomicU64::new(0)),
             vault: Mutex::new(Arc::new(VaultSnapshot::default())),
+            unlisted: Mutex::new(Unlisted::default()),
             clipboard: Arc::new(Clipboard::default()),
             copy_timers: Mutex::new(CopyTimers::default()),
             clipboard_events: Mutex::new(()),
@@ -540,7 +548,7 @@ impl Daemon {
     /// then marks the vault open. A lock at any point wins.
     async fn open(&self, key: SessionKey, epoch: u64) -> Result<(), IpcError> {
         let client = self.promote(key, epoch)?;
-        if let Err(e) = self.rebuild(&client, epoch).await {
+        if let Err(e) = self.rebuild(&client, epoch, None).await {
             tracing::warn!("building the vault index failed: {e}");
         }
         self.touch();
@@ -587,6 +595,7 @@ impl Daemon {
             self.epoch.fetch_add(1, Ordering::SeqCst);
             self.grants.lock().expect("grants").clear();
             *self.vault.lock().expect("vault") = Arc::new(VaultSnapshot::default());
+            *self.unlisted.lock().expect("unlisted") = Unlisted::default();
             self.update_status(|s| {
                 if matches!(s.vault, VaultState::Unlocked | VaultState::Unlocking) {
                     s.vault = VaultState::Locked;
@@ -767,8 +776,16 @@ impl Daemon {
         recent.truncate(RECENT_LIMIT);
     }
 
-    /// Rebuilds the metadata index from the CLI.
-    pub(crate) async fn rebuild(&self, client: &ServeClient, epoch: u64) -> Result<(), BwError> {
+    /// Builds the vault index from the CLI's lists. After a sync, `synced`
+    /// is the mark taken when it started: once the lists from after the sync
+    /// are read, what was remembered before it is retired, in the same step
+    /// that lays the rest over them.
+    pub(crate) async fn rebuild(
+        &self,
+        client: &ServeClient,
+        epoch: u64,
+        synced: Option<u64>,
+    ) -> Result<(), BwError> {
         let _guard = self.rebuild.lock().await;
         let items = client.list_items(&ListOptions::default()).await?;
         let trash = client.list_items(&ListOptions { trash: true, ..Default::default() }).await?;
@@ -801,6 +818,15 @@ impl Daemon {
         };
         drop(items);
         drop(trash);
+        {
+            let mut unlisted = self.unlisted.lock().expect("unlisted");
+            if let Some(mark) = synced
+                && self.epoch() == epoch
+            {
+                unlisted.forget_before(mark);
+            }
+            unlisted.apply(&mut snapshot);
+        }
         let by_name = |a: &String, b: &String| a.to_lowercase().cmp(&b.to_lowercase());
         snapshot.items.sort_by(|a, b| by_name(&a.name, &b.name));
         snapshot.trash.sort_by(|a, b| by_name(&a.name, &b.name));
@@ -815,14 +841,48 @@ impl Daemon {
         Ok(())
     }
 
+    /// Runs a CLI call on an object the index knows, asking again for up to
+    /// two seconds while the CLI answers "not found": `bw serve` can for a
+    /// moment not find an item or folder it has just created. A call that
+    /// found nothing changed nothing, so asking again is safe.
+    pub(crate) async fn on_known<T, F>(&self, known: bool, mut call: impl FnMut() -> F) -> Result<T, BwError>
+    where
+        F: std::future::Future<Output = Result<T, BwError>>,
+    {
+        let mut attempts = 0;
+        loop {
+            match call().await {
+                Err(BwError::NotFound) if known && attempts < 20 => {
+                    attempts += 1;
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                }
+                result => return result,
+            }
+        }
+    }
+
+    pub(crate) async fn read_item(&self, client: &ServeClient, id: &str) -> Result<Value, BwError> {
+        self.on_known(self.knows_item(id), || client.get_item(id)).await
+    }
+
+    pub(crate) fn knows_item(&self, id: &str) -> bool {
+        let vault = self.vault.lock().expect("vault").clone();
+        vault.items.iter().chain(&vault.trash).any(|i| i.id == id)
+    }
+
+    pub(crate) fn knows_folder(&self, id: &str) -> bool {
+        self.vault.lock().expect("vault").folders.iter().any(|f| f.id == id)
+    }
+
     /// Syncs with the server and rebuilds the index.
     pub async fn sync(&self) -> Result<(), IpcError> {
         let client = self.client().await?;
         let epoch = self.epoch();
         self.update_status(|s| s.syncing = true);
+        let mark = self.unlisted.lock().expect("unlisted").mark();
         let result = async {
             client.sync().await?;
-            self.rebuild(&client, epoch).await?;
+            self.rebuild(&client, epoch, Some(mark)).await?;
             client.status().await
         }
         .await;
@@ -845,14 +905,80 @@ impl Daemon {
         }
     }
 
-    /// Rebuilds the index after a change and tells the app.
-    pub(crate) async fn changed(&self, client: &ServeClient) {
-        let epoch = self.epoch();
-        if let Err(e) = self.rebuild(client, epoch).await {
+    /// Starts a change to the vault: waits for any other change to finish
+    /// and notes the session it belongs to.
+    pub(crate) async fn begin_change(&self) -> ChangeGuard<'_> {
+        let lock = self.changes.lock().await;
+        ChangeGuard { _lock: lock, epoch: self.epoch() }
+    }
+
+    /// Rebuilds the index after a change and tells the app. What the change
+    /// left is kept for the index first, because the CLI's lists can be
+    /// behind; see `unlisted`.
+    pub(crate) async fn changed(&self, guard: &ChangeGuard<'_>, client: &ServeClient, change: Change<'_>) {
+        self.record(guard, change);
+        if let Err(e) = self.rebuild(client, guard.epoch, None).await {
             tracing::warn!("refreshing the vault index failed: {e}");
         }
         self.emit(Event::VaultChanged);
     }
+
+    /// Keeps what a change left, unless its session has ended since it
+    /// started.
+    fn record(&self, guard: &ChangeGuard<'_>, change: Change<'_>) {
+        let slot = self.session.lock().expect("session");
+        if slot.is_none() || self.epoch() != guard.epoch {
+            return;
+        }
+        let indexed = |id: &str| {
+            let vault = self.vault.lock().expect("vault").clone();
+            vault.items.iter().chain(&vault.trash).find(|i| i.id == id).cloned()
+        };
+        let mut unlisted = self.unlisted.lock().expect("unlisted");
+        match change {
+            Change::Item(item) => {
+                if let Some(summary) = summarize(item) {
+                    unlisted.item(summary.id.clone(), Some(summary));
+                }
+            }
+            // Reading the item back can be behind too, so these follow from
+            // what is known already.
+            Change::Trashed(id) => unlisted.derive(&id, indexed(&id).as_ref(), |i| i.deleted = true),
+            Change::Restored(id) => unlisted.derive(&id, indexed(&id).as_ref(), |i| i.deleted = false),
+            Change::AttachmentDeleted(id) => unlisted.derive(&id, indexed(&id).as_ref(), |i| {
+                i.attachments = i.attachments.saturating_sub(1);
+            }),
+            Change::Deleted(id) => unlisted.item(id, None),
+            Change::Folder(id, folder) => {
+                let folder = folder.and_then(|f| {
+                    Some(Folder { id: f["id"].as_str()?.to_owned(), name: f["name"].as_str()?.to_owned() })
+                });
+                unlisted.folder(id, folder);
+            }
+        }
+    }
+}
+
+/// A change to the vault in progress; see `Daemon::begin_change`.
+pub(crate) struct ChangeGuard<'a> {
+    _lock: tokio::sync::MutexGuard<'a, ()>,
+    epoch: u64,
+}
+
+/// What a change left behind, for the index; see `unlisted`.
+pub(crate) enum Change<'a> {
+    /// An item as the change returned it.
+    Item(&'a Value),
+    /// An item moved to the trash.
+    Trashed(String),
+    /// An item restored from the trash.
+    Restored(String),
+    /// An item that lost one attachment.
+    AttachmentDeleted(String),
+    /// An item deleted for good.
+    Deleted(String),
+    /// A folder as the change returned it, or `None` once deleted.
+    Folder(String, Option<&'a Value>),
 }
 
 /// The pinned release, when Countersign installed `version` itself, it is

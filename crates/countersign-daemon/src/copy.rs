@@ -22,7 +22,7 @@ impl Daemon {
         self.touch();
         let epoch = self.epoch();
         let client = self.client().await?;
-        let item = client.get_item(id).await.map_err(ipc_error)?;
+        let item = self.read_item(&client, id).await.map_err(ipc_error)?;
         self.check_reprompt(id, &item)?;
         let name = item["name"].as_str().unwrap_or_default().to_owned();
         let has_totp = Field::Totp.read(&item).is_some();

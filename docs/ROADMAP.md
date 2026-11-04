@@ -13,8 +13,6 @@ lists what each release changed.
 - **SSH keys cannot be created**, and an existing key's key material cannot
   be changed, because the official CLI cannot generate or import keys.
   Countersign will add both if the CLI does.
-- **An edit made right after unlocking** was once seen to show its old value
-  until the next sync, although the server had the new one.
 
 ## Later
 

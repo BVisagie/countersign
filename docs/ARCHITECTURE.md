@@ -46,8 +46,23 @@ request to the running server costs milliseconds
 The CLI answers one request at a time on its connection, and a sync takes
 0.2 to 2 seconds, so the daemon syncs ten seconds after unlocking, after the
 usual unlock-then-copy. `bw serve` sometimes answers "Not found." for an
-item it created a moment earlier, so the daemon uses the item that create
-returns instead of reading it back.
+item or folder it created a moment earlier, so the daemon uses what a change
+returns instead of reading it back, and asks again for up to two seconds
+when a call on an object the index knows finds nothing.
+
+`bw serve` 2026.10.1 also often lists items and folders as they were before
+the latest change: an edited item keeps its old name, a renamed folder its
+old name, a new one is missing. Folders catch up within seconds; items stay
+behind until a later change or a sync
+([bitwarden/clients#24432](https://github.com/bitwarden/clients/issues/24432)).
+Reading an item back can be behind for a moment too. So the
+daemon keeps what each change left, from the change's reply or, for the
+trash and attachments, from what it knew already, and lays it over every
+list until the list shows it. Changes from other devices arrive only
+through a sync, so a sync retires what came before it. Changes run one at a
+time, and one still running when the vault locks leaves nothing behind.
+`crates/countersign-daemon/src/contract.rs` checks this against the real
+CLI.
 
 The CLI refuses to serve until an account is logged in, and has no login
 route, so sign-in uses `bw login` itself.
@@ -56,7 +71,9 @@ Two Send commands also run one-off, with the session key in the child's
 environment. `bw serve` has no route for file Sends, so `bw send create`
 reads its request on stdin. And `bw serve` 2026.10.1 answers `/send/list`
 from a cache it never refreshes: creates, edits, deletes and syncs do not
-show there until the server restarts. `bw send list` reads the stored vault
+show there until the server restarts
+([bitwarden/clients#24434](https://github.com/bitwarden/clients/issues/24434)).
+`bw send list` reads the stored vault
 each time, at the usual two to three seconds, so the app updates its Send
 list from each change's reply and lists again only after a sync or unlock.
 
