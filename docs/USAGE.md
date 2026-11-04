@@ -55,16 +55,25 @@ main window instead.
 ## The main window
 
 The sidebar filters the vault: all items, favorites, each item type, your
-folders, organization collections and the trash. **Tools** holds the
-password generator and Send.
+folders, organization collections and the trash. Folders nest as they do in
+Bitwarden: a folder named `Work/Clients` shows as **Clients** under **Work**,
+when a folder named `Work` exists. The password generator and Send stay at
+the foot of the sidebar.
+
+Search covers what the sidebar shows. When a search in a folder or a type
+finds nothing, **Search all items** widens it.
 
 Select an item to see it. Passwords, card numbers, security codes and
 hidden fields stay masked until you press the eye button, and hide again
 after a minute. Notes show in full, except on items that ask for the master
 password. Verification codes show and count down live (they need Bitwarden
 Premium).
-Each field has a copy button, websites open in your browser, and the item
-shows its password history and attachments.
+Revealed passwords color digits and symbols, as the generator does.
+Each field has a copy button, which shows a check once it copies. Websites
+open in your browser, and the item shows its password history and
+attachments. The star beside the item's name adds or removes the favorite,
+and its folder chip opens the folder. A verification code turns the warning
+color in its last five seconds.
 
 | Key | Action |
 | --- | --- |
@@ -73,10 +82,13 @@ shows its password history and attachments.
 | `Ctrl+C` / `Ctrl+B` / `Ctrl+T` | Copy the password / username / verification code |
 | `Ctrl+U` | Open the website |
 | `Ctrl+N` | New login |
+| `Ctrl+E` | Edit the item |
 | `Ctrl+G` | Password generator |
+| `Ctrl+Shift+S` | Send |
 | `Ctrl+R` | Sync |
 | `Ctrl+L` | Lock |
 | `Ctrl+,` | Settings |
+| `Ctrl+?` | Keyboard shortcuts |
 | `Ctrl+Q` | Quit |
 
 ## Copying
@@ -107,30 +119,34 @@ is not cleared.
 - **New items.** The **+** button above the list offers a new login, card,
   identity or note; `Ctrl+N` starts a login. A new item goes into the
   folder you are viewing.
-- **Edit an item** with the pencil button above its details. The editor
-  covers the name, folder, favorite, **Ask for the master password**, the
-  item's own fields, websites, notes and custom fields (text, hidden or
-  checkbox). The password field has a button that generates one. Save or
-  cancel at the top.
+- **Edit an item** with the pencil button above its details, or `Ctrl+E`.
+  The editor covers the name, folder, favorite, **Ask for the master
+  password**, the item's own fields, websites, notes and custom fields
+  (text, hidden or checkbox). The password field has a button that
+  generates one, with the generator's options. Save or cancel at the top,
+  or press `Ctrl+S` or `Esc`. Cancelling asks first if you changed
+  anything.
 - **SSH keys** show their public key and fingerprint; the key itself cannot
   be changed. Everything else can.
 - While you edit, syncs leave your draft alone. Locking throws it away.
 - **More actions** are in the **⋮** menu: add or remove a favorite, **Add
   attachment…**, **Move to organization…** and **Move to trash**. Moving to
   an organization needs at least one collection and cannot be undone from
-  Countersign. Attachments need Bitwarden Premium.
+  Countersign. Attachments need Bitwarden Premium. **Undo**, in the message
+  that follows, takes an item back out of the trash.
 - **In the trash**, the menu offers **Restore** and **Delete forever…**.
 - **Delete an attachment** with the bin button on its row.
-- **Folders.** The **+** button offers **New folder…**. Right-click a folder
-  in the sidebar to rename or delete it; deleting a folder keeps its items,
-  which move to **No folder**.
+- **Folders.** The **+** button offers **New folder…**. To rename or delete a
+  folder, right-click it in the sidebar, press the menu key or `Shift+F10`
+  on it, or use the main menu while it is shown. Deleting a folder keeps its
+  items, which move to **No folder**.
 
 Items set to ask for the master password ask for it before they can be
 edited.
 
 ## Send
 
-**Tools → Send** shares text or a file through Bitwarden Send, end-to-end
+**Send**, at the foot of the sidebar or `Ctrl+Shift+S`, shares text or a file through Bitwarden Send, end-to-end
 encrypted. The list takes a few seconds to load the first time.
 
 - **+** creates a **Text Send** or a **File Send**. File Sends can be up to
@@ -147,11 +163,12 @@ encrypted. The list takes a few seconds to load the first time.
 
 ## Password generator
 
-**Tools → Generator**, or `Ctrl+G`. Make a password (5 to 128 characters,
-with the character sets and minimums you choose) or a passphrase (3 to 20
-words). It starts with a 20-character password. Digits and symbols are
-colored so similar characters are easier to tell apart. **Copy** clears
-like any other copy.
+**Generator**, at the foot of the sidebar, or `Ctrl+G`. Make a password (5
+to 128 characters, with the character sets and minimums you choose) or a
+passphrase (3 to 20 words). It starts with a 20-character password and
+remembers the options you choose; the editor's generate button uses them
+too. Digits and symbols are colored so similar characters are easier to
+tell apart. **Copy** clears like any other copy.
 
 ## Locking
 
