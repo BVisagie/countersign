@@ -14,6 +14,7 @@ use crate::ui::label;
 /// `Ok(false)` if the user cancels.
 pub async fn ask(app: &Rc<App>, parent: &gtk::Widget, id: &str) -> Result<bool, IpcError> {
     let entry = gtk::PasswordEntry::builder().show_peek_icon(true).build();
+    super::space_masked(&entry);
     entry.update_property(&[gtk::accessible::Property::Label("Master password")]);
     let error = label("", &["cs-error"]);
     error.set_visible(false);

@@ -470,6 +470,7 @@ impl Sends {
             .active(has_password)
             .build();
         let password = adw::PasswordEntryRow::builder().title("Password").build();
+        super::space_masked(&password);
         protect.bind_property("active", &password, "visible").sync_create().build();
         // A Send for chosen email addresses cannot also have a password.
         if original["emails"].as_array().is_some_and(|e| !e.is_empty()) {

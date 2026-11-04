@@ -48,6 +48,21 @@ fn background(window: &gtk::Window) {
     }
 }
 
+/// The first widget of type `T` under `root`, depth first.
+fn find<T: IsA<gtk::Widget>>(root: &gtk::Widget) -> Option<T> {
+    let mut child = root.first_child();
+    while let Some(widget) = child {
+        if let Ok(found) = widget.clone().downcast::<T>() {
+            return Some(found);
+        }
+        if let Some(found) = find(&widget) {
+            return Some(found);
+        }
+        child = widget.next_sibling();
+    }
+    None
+}
+
 async fn settle() {
     glib::timeout_future(Duration::from_millis(1200)).await;
 }
@@ -135,6 +150,9 @@ pub fn run(app: &Rc<App>, dir: PathBuf) {
         settle().await;
         shot(quick.window.child().as_ref().expect("child"), "quick-locked");
         main.window.set_default_size(1280, 800);
+        if let Some(entry) = find::<gtk::PasswordEntry>(main.window.upcast_ref()) {
+            entry.set_text("demo-password");
+        }
         settle().await;
         shot(main.window.upcast_ref(), "unlock");
         app.gtk.quit();

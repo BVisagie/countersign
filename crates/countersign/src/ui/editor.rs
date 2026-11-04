@@ -105,7 +105,9 @@ fn entry(title: &str, value: &str) -> adw::EntryRow {
 }
 
 fn secret(title: &str, value: &str) -> adw::PasswordEntryRow {
-    adw::PasswordEntryRow::builder().title(title).text(value).build()
+    let row = adw::PasswordEntryRow::builder().title(title).text(value).build();
+    super::space_masked(&row);
+    row
 }
 
 fn combo(title: &str, options: &[&str], selected: &str) -> adw::ComboRow {
