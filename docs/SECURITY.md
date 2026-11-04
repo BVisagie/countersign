@@ -63,7 +63,12 @@ response buffers are cleared after parsing. This is best effort: the CLI is a
 Node program whose memory Countersign cannot clear, and GTK copies text it
 displays.
 
+## Supported versions
+
+There are no releases yet. Security fixes go to `main`.
+
 ## Reporting a vulnerability
 
-Use GitHub's private vulnerability reporting. Do not open a public issue with
-an exploit, credential, session key or vault data.
+[Report it privately](https://github.com/BVisagie/countersign/security/advisories/new)
+through GitHub's private vulnerability reporting. Do not open a public issue
+with an exploit, credential, session key or vault data.

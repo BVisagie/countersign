@@ -50,9 +50,9 @@ Screenshots use a fictional demo vault; see `scripts/screenshots.sh`.
 
 ## Status
 
-Milestones M0 to M3 of [the plan](docs/PLAN.md) are done; not released yet.
-The plan lists what comes next. [M0 results](docs/M0-RESULTS.md) has the
-measured performance.
+Early, with no release yet: you build it from source. Everything above
+works today. [The roadmap](docs/ROADMAP.md) lists the known limitations, and
+[Performance](docs/PERFORMANCE.md) has the measurements.
 
 ## Quick start
 

@@ -13,6 +13,21 @@ Hyprland key / tray / `countersign --quick`
   bw serve (official Bitwarden CLI)  encryption · sync · server API
 ```
 
+## Principles
+
+- Countersign never implements Bitwarden's encryption or calls Bitwarden's
+  servers. The official CLI does both.
+- `bw serve` listens only on a private socket pair, never on a TCP port or a
+  filesystem socket.
+- Only the daemon holds the session. The app receives item metadata, and a
+  secret only when you reveal or edit it. Copying never sends the secret to
+  the app.
+- The daemon talks to the CLI through an interface shaped like `bw serve`,
+  so Bitwarden's Rust CLI can replace the Node CLI once it has `serve`.
+- The app uses GTK4 and libadwaita through gtk4-rs directly, the idiom of
+  GNOME's Rust applications, for direct control over focus and list
+  performance.
+
 ## The CLI adapter
 
 `countersign-bw` runs one-off commands (`--version`, `status`, `config
@@ -25,7 +40,14 @@ other end of a socket pair. The CLI serves exactly one connection, which
 only the daemon holds, and exits when it closes. `bw serve` checks the Host
 header against its configured hostname and port, so every request sends
 `Host: localhost:8087`. One-off commands cost two to three seconds each; a
-request to the running server costs milliseconds.
+request to the running server costs milliseconds
+([measurements](PERFORMANCE.md)).
+
+The CLI answers one request at a time on its connection, and a sync takes
+0.2 to 2 seconds, so the daemon syncs ten seconds after unlocking, after the
+usual unlock-then-copy. `bw serve` sometimes answers "Not found." for an
+item it created a moment earlier, so the daemon uses the item that create
+returns instead of reading it back.
 
 The CLI refuses to serve until an account is logged in, and has no login
 route, so sign-in uses `bw login` itself.
