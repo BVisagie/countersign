@@ -48,6 +48,15 @@ pub fn toast(message: &str) {
     }
 }
 
+/// Shows a short message with a button, such as Undo, in the main window.
+pub fn toast_with_action(message: &str, button: &str, run: impl Fn() + 'static) {
+    if let Some(window) = current() {
+        let toast = adw::Toast::builder().title(message).button_label(button).build();
+        toast.connect_button_clicked(move |_| run());
+        window.toasts.add_toast(toast);
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 enum Filter {
     All,

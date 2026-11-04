@@ -210,9 +210,30 @@ impl Detail {
     }
 
     fn trash(self: &Rc<Self>) {
-        if let Some(id) = self.current_id() {
-            self.request(Request::DeleteItem { id, permanent: false }, "Moved to the trash");
-        }
+        let Some(id) = self.current_id() else { return };
+        let me = self.clone();
+        glib::spawn_future_local(async move {
+            match me.app.request(Request::DeleteItem { id: id.clone(), permanent: false }).await {
+                Ok(_) => {
+                    let app = me.app.clone();
+                    super::window::toast_with_action("Moved to the trash", "Undo", move || {
+                        let (app, id) = (app.clone(), id.clone());
+                        glib::spawn_future_local(async move {
+                            match app.request(Request::RestoreItem { id: id.clone() }).await {
+                                Ok(_) => {
+                                    if let Some(window) = super::window::current() {
+                                        window.select_when_listed(&id);
+                                    }
+                                    super::window::toast("Restored");
+                                }
+                                Err(e) => super::window::toast(&e.message),
+                            }
+                        });
+                    });
+                }
+                Err(e) => (me.notify)(&e.message),
+            }
+        });
     }
 
     fn restore(self: &Rc<Self>) {
