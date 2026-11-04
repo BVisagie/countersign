@@ -48,6 +48,13 @@ server protocol. Those stay in the official CLI.
   and are cleared after the timeout or on lock, but never if another app has
   replaced them since.
 
+## Release archives
+
+A release archive is built by GitHub Actions from the tagged commit, in an
+Arch Linux container. Its `SHA256SUMS` shows that the download arrived
+intact; like the archive, it comes from this repository's release page.
+Building from source avoids trusting the archive.
+
 ## The CLI download
 
 Installing the CLI trusts Bitwarden's GitHub release and HTTPS, and the
@@ -65,7 +72,8 @@ displays.
 
 ## Supported versions
 
-There are no releases yet. Security fixes go to `main`.
+Security fixes go to `main` and come in the next release. Only the latest
+release is supported.
 
 ## Reporting a vulnerability
 

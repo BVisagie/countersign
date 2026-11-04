@@ -50,19 +50,26 @@ Screenshots use a fictional demo vault; see `scripts/screenshots.sh`.
 
 ## Status
 
-Early, with no release yet: you build it from source. Everything above
-works today. [The roadmap](docs/ROADMAP.md) lists the known limitations, and
+Early: 0.1.0 is the first release. It is built and tested on Omarchy.
+[The roadmap](docs/ROADMAP.md) lists the known limitations,
+[the changelog](CHANGELOG.md) what each release changed, and
 [Performance](docs/PERFORMANCE.md) has the measurements.
 
 ## Quick start
 
-On Omarchy, or another Hyprland desktop with GTK 4.18+ and libadwaita 1.7+:
+On Omarchy, download the latest release, check it and install it for your
+user:
 
 ```bash
-git clone https://github.com/BVisagie/countersign.git
-cd countersign
-scripts/install.sh
+curl -LO https://github.com/BVisagie/countersign/releases/latest/download/countersign-x86_64.tar.gz
+curl -LO https://github.com/BVisagie/countersign/releases/latest/download/SHA256SUMS
+sha256sum -c SHA256SUMS
+tar xf countersign-x86_64.tar.gz
+countersign-x86_64/scripts/install.sh
 ```
+
+On another Hyprland desktop with GTK 4.18+ and libadwaita 1.7+, or to run
+the latest code, [build it from source](docs/INSTALL.md#build-from-source).
 
 Add quick access and autostart to Hyprland:
 

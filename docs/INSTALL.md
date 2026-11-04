@@ -1,28 +1,44 @@
 # Installing Countersign
 
-Countersign runs on Omarchy and other Hyprland desktops. There is no package
-yet; you build it from source with one script.
+Countersign runs on Omarchy and other Hyprland desktops. Each release has an
+archive for x86_64 Omarchy, built on Arch Linux. On other systems, or to run
+the latest code, build it from source. Both install with the same script.
 
 ## Requirements
 
 - **A Hyprland desktop with GTK 4.18+ and libadwaita 1.7+.** Omarchy already
   has both, and `gtk4-layer-shell`, which quick access needs.
-- **Rust 1.99 or newer**, with Cargo, from rustup or mise.
-- **Build tools and libraries.** On Omarchy or Arch:
-
-  ```bash
-  sudo pacman -S --needed base-devel git gtk4 libadwaita gtk4-layer-shell vte4
-  ```
-
-  `vte4` runs the Bitwarden CLI's sign-in inside Countersign. Omarchy does
-  not include it. The install script checks for these libraries and offers
-  to install any that are missing.
+- **`vte4`**, which runs the Bitwarden CLI's sign-in inside Countersign.
+  Omarchy does not include it. The install script checks for these libraries
+  and offers to install any that are missing.
 - **Optional: a bar with a system tray** (StatusNotifierItem), for the tray
   icon. Everything else works without one.
 - **The official Bitwarden CLI.** Countersign can install it for you; see
   [The Bitwarden CLI](#the-bitwarden-cli).
 
-## Install
+Building from source also needs:
+
+- **Rust 1.99 or newer**, with Cargo, from rustup or mise.
+- **Build tools and the libraries' development files.** On Omarchy or Arch:
+
+  ```bash
+  sudo pacman -S --needed base-devel git gtk4 libadwaita gtk4-layer-shell vte4
+  ```
+
+## Install a release
+
+```bash
+curl -LO https://github.com/BVisagie/countersign/releases/latest/download/countersign-x86_64.tar.gz
+curl -LO https://github.com/BVisagie/countersign/releases/latest/download/SHA256SUMS
+sha256sum -c SHA256SUMS
+tar xf countersign-x86_64.tar.gz
+countersign-x86_64/scripts/install.sh
+```
+
+`sha256sum -c` should say `countersign-x86_64.tar.gz: OK`. Older releases
+are on the [releases page](https://github.com/BVisagie/countersign/releases).
+
+## Build from source
 
 ```bash
 git clone https://github.com/BVisagie/countersign.git
@@ -30,7 +46,11 @@ cd countersign
 scripts/install.sh
 ```
 
-The script builds Countersign and installs it for your user only:
+## What the install script does
+
+In a release archive it installs the binaries that came with it; in a
+source checkout it builds them first. Either way it installs Countersign for
+your user only:
 
 | What | Where |
 | --- | --- |
@@ -41,11 +61,11 @@ The script builds Countersign and installs it for your user only:
 `XDG_BIN_HOME` and `XDG_DATA_HOME` move these folders if you set them.
 `~/.local/bin` needs to be on your `PATH`, as it is on Omarchy.
 
-Before building, the script checks for the libraries in
-[Requirements](#requirements). If any are missing, it offers to install them
-with `sudo pacman -S --needed`, and pacman lists what it will install and
-asks before it changes anything. Run without a terminal, the script prints
-that command and stops instead. Nothing else on your system is changed.
+First, the script checks for the libraries in [Requirements](#requirements).
+If any are missing, it offers to install them with
+`sudo pacman -S --needed`, and pacman lists what it will install and asks
+before it changes anything. Run without a terminal, the script prints that
+command and stops instead. Nothing else on your system is changed.
 
 ## Add it to Hyprland
 
@@ -128,14 +148,18 @@ terminal, and the other way round.
 
 ## Updating
 
+Run the commands in [Install a release](#install-a-release) again, in the
+same folder: the new archive replaces the old one and unpacks over it. From
+source:
+
 ```bash
 cd countersign
 git pull
 scripts/install.sh
 ```
 
-Then restart Countersign so the new version runs: quit it with `Ctrl+Q` or
-the tray's **Quit**, which locks the vault. Its background service exits by
+Either way, then restart Countersign so the new version runs: quit it with
+`Ctrl+Q` or the tray's **Quit**, which locks the vault. Its background service exits by
 itself about a minute later; `pkill -x countersignd` stops it at once. Then
 start Countersign again.
 
