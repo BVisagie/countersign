@@ -78,7 +78,7 @@ listview.cs-items > row {
 }
 listview.cs-items > row:hover { background-color: var(--cs-hover); }
 listview.cs-items > row:selected { background-color: var(--cs-selection); color: var(--cs-selection-fg); }
-listview.cs-items > row:selected .cs-item-subtitle { color: var(--cs-selection-fg); opacity: 0.8; }
+listview.cs-items > row:selected .cs-item-subtitle { color: var(--cs-selection-fg); }
 
 .cs-monogram {
   min-width: 32px; min-height: 32px; border-radius: var(--cs-radius-small);
@@ -159,7 +159,7 @@ window.cs-quick-window { background: transparent; }
 }
 .cs-quick listview.cs-items > row { margin: 1px 6px; padding: 7px 10px; }
 .cs-quick-hint { font-size: 0.8em; color: var(--cs-muted); }
-.cs-quick-action { font-size: 0.8em; color: var(--cs-selection-fg); opacity: 0.85; }
+.cs-quick-action { font-size: 0.8em; color: var(--cs-selection-fg); }
 .cs-quick-footer { padding: 7px 12px; border-top: 1px solid var(--cs-line); background-color: var(--cs-bg-darker); }
 .cs-key {
   font-size: 0.74em; padding: 0 5px; min-height: 18px;

@@ -83,6 +83,9 @@ impl Rgb {
 
 /// WCAG's minimum contrast for body text.
 const MIN_TEXT_CONTRAST: f32 = 4.5;
+/// The foreground's share in the tint of cards, and of chips and hovers.
+const CARD_ALPHA: f32 = 0.035;
+const HOVER_ALPHA: f32 = 0.07;
 
 /// The colors Countersign uses from an Omarchy theme.
 #[derive(Debug, Clone, PartialEq)]
@@ -118,14 +121,16 @@ impl Palette {
         let bg_dark = get("dark_background").unwrap_or_else(|| bg.mix(toward, 0.12));
         let bg_darker = get("darker_background").unwrap_or_else(|| bg.mix(toward, 0.24));
         let bg_lighter = get("lighter_background").unwrap_or_else(|| bg.mix(away, 0.08));
-        // Secondary text sits on the window, the list, the sidebar and popovers.
-        let surfaces = [bg, bg_dark, bg_darker, bg_lighter];
+        // Secondary text sits on the window, the list, the sidebar and
+        // popovers, and on the window's tinted cards and chips.
+        let surfaces = [bg, bg_dark, bg_darker, bg_lighter, bg.mix(fg, CARD_ALPHA), bg.mix(fg, HOVER_ALPHA)];
         let selection = get("selection").unwrap_or_else(|| accent.mix(bg, 0.55));
         // `selection_foreground` belongs with a terminal's bright
         // `selection_background`, not with `selection`: on the subtle
         // `selection` it can be unreadable. Use it only when it reads there.
-        let selection_fg =
-            get("selection_foreground").filter(|c| c.contrast(selection) >= MIN_TEXT_CONTRAST).unwrap_or(fg);
+        let selection_fg = get("selection_foreground")
+            .filter(|c| c.contrast(selection) >= MIN_TEXT_CONTRAST)
+            .unwrap_or_else(|| fg.readable_on(&[selection], away));
         Some(Palette {
             dark,
             bg,
@@ -204,10 +209,10 @@ window, popover, dialog, tooltip {{ font-family: monospace; }}
             selection = self.selection.hex(),
             selection_fg = self.selection_fg.hex(),
             frame = self.border.hex(),
-            card = self.fg.alpha(0.035),
+            card = self.fg.alpha(CARD_ALPHA),
             line = self.fg.alpha(0.12),
             line_strong = self.fg.alpha(0.28),
-            hover = self.fg.alpha(0.07),
+            hover = self.fg.alpha(HOVER_ALPHA),
             shadow = Rgb(0, 0, 0).alpha(if self.dark { 0.45 } else { 0.18 }),
             small = radius.min(6),
         );
@@ -364,16 +369,21 @@ selection_background = "#c8c8c8"
 
     #[test]
     fn secondary_text_reads_on_every_surface() {
-        // Tokyo Night's and Rosé Pine's muted colors are about 2:1 and 1.5:1.
+        // Tokyo Night's and Rosé Pine's muted colors are about 2:1 and 1.5:1;
+        // Last Horizon's popover is its window, and its cards are tinted.
         for theme in [
             "mode = \"dark\"\naccent = \"#7aa2f7\"\nbackground = \"#1a1b26\"\nforeground = \"#a9b1d6\"\nmuted = \"#414868\"\ndark_foreground = \"#565f89\"\n",
+            "mode = \"dark\"\naccent = \"#b59790\"\nselection = \"#584e51\"\nmuted = \"#584e51\"\nbackground = \"#0c0b0c\"\ndark_background = \"#090809\"\ndarker_background = \"#060606\"\nlighter_background = \"#0c0b0c\"\nforeground = \"#FAFCFB\"\ndark_foreground = \"#584e51\"\n",
             "mode = \"light\"\naccent = \"#56949f\"\nbackground = \"#faf4ed\"\nforeground = \"#575279\"\nmuted = \"#dfdad9\"\n",
         ] {
             let p = Palette::from_toml(theme).unwrap();
-            for surface in [p.bg, p.bg_dark, p.bg_darker, p.bg_lighter] {
+            let card = p.bg.mix(p.fg, CARD_ALPHA);
+            let chip = p.bg.mix(p.fg, HOVER_ALPHA);
+            for surface in [p.bg, p.bg_dark, p.bg_darker, p.bg_lighter, card, chip] {
                 assert!(p.muted.contrast(surface) >= MIN_TEXT_CONTRAST, "{theme}");
                 assert!(p.fg_dim.contrast(surface) >= MIN_TEXT_CONTRAST, "{theme}");
             }
+            assert!(p.selection_fg.contrast(p.selection) >= MIN_TEXT_CONTRAST, "{theme}");
         }
         // A muted color that already reads is left as it is.
         let p = Palette::from_toml(
