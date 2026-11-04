@@ -548,7 +548,7 @@ impl Daemon {
     /// then marks the vault open. A lock at any point wins.
     async fn open(&self, key: SessionKey, epoch: u64) -> Result<(), IpcError> {
         let client = self.promote(key, epoch)?;
-        if let Err(e) = self.rebuild(&client, epoch).await {
+        if let Err(e) = self.rebuild(&client, epoch, None).await {
             tracing::warn!("building the vault index failed: {e}");
         }
         self.touch();
@@ -776,8 +776,16 @@ impl Daemon {
         recent.truncate(RECENT_LIMIT);
     }
 
-    /// Rebuilds the metadata index from the CLI.
-    pub(crate) async fn rebuild(&self, client: &ServeClient, epoch: u64) -> Result<(), BwError> {
+    /// Builds the vault index from the CLI's lists. After a sync, `synced`
+    /// is the mark taken when it started: once the lists from after the sync
+    /// are read, what was remembered before it is retired, in the same step
+    /// that lays the rest over them.
+    pub(crate) async fn rebuild(
+        &self,
+        client: &ServeClient,
+        epoch: u64,
+        synced: Option<u64>,
+    ) -> Result<(), BwError> {
         let _guard = self.rebuild.lock().await;
         let items = client.list_items(&ListOptions::default()).await?;
         let trash = client.list_items(&ListOptions { trash: true, ..Default::default() }).await?;
@@ -810,7 +818,15 @@ impl Daemon {
         };
         drop(items);
         drop(trash);
-        self.unlisted.lock().expect("unlisted").apply(&mut snapshot);
+        {
+            let mut unlisted = self.unlisted.lock().expect("unlisted");
+            if let Some(mark) = synced
+                && self.epoch() == epoch
+            {
+                unlisted.forget_before(mark);
+            }
+            unlisted.apply(&mut snapshot);
+        }
         let by_name = |a: &String, b: &String| a.to_lowercase().cmp(&b.to_lowercase());
         snapshot.items.sort_by(|a, b| by_name(&a.name, &b.name));
         snapshot.trash.sort_by(|a, b| by_name(&a.name, &b.name));
@@ -866,8 +882,7 @@ impl Daemon {
         let mark = self.unlisted.lock().expect("unlisted").mark();
         let result = async {
             client.sync().await?;
-            self.unlisted.lock().expect("unlisted").forget_before(mark);
-            self.rebuild(&client, epoch).await?;
+            self.rebuild(&client, epoch, Some(mark)).await?;
             client.status().await
         }
         .await;
@@ -902,7 +917,7 @@ impl Daemon {
     /// behind; see `unlisted`.
     pub(crate) async fn changed(&self, guard: &ChangeGuard<'_>, client: &ServeClient, change: Change<'_>) {
         self.record(guard, change);
-        if let Err(e) = self.rebuild(client, guard.epoch).await {
+        if let Err(e) = self.rebuild(client, guard.epoch, None).await {
             tracing::warn!("refreshing the vault index failed: {e}");
         }
         self.emit(Event::VaultChanged);
