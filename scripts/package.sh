@@ -13,6 +13,9 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)
+# The commit's time, for the archive's file times. Assigned on its own so a
+# git failure stops the script.
+stamp=$(git log -1 --format=%ct)
 arch=$(uname -m)
 archive=countersign-$arch.tar.gz
 stage=dist/countersign-$arch
@@ -30,7 +33,7 @@ install -Dm644 LICENSE "$stage/LICENSE"
 
 # The same commit gives the same file list, order, owners and times.
 tar -C dist --sort=name --owner=0 --group=0 --numeric-owner \
-  --mtime="@$(git log -1 --format=%ct)" -czf "dist/$archive" "${stage#dist/}"
+  --mtime="@$stamp" -czf "dist/$archive" "${stage#dist/}"
 rm -rf "$stage"
 (cd dist && sha256sum "$archive" >SHA256SUMS)
 

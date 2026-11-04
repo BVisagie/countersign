@@ -24,6 +24,10 @@ jobs:
       - name: Install system packages
         run: pacman -Syu --noconfirm --needed base-devel git gtk4 libadwaita gtk4-layer-shell vte4 rustup
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # The container runs as root on a workspace the runner owns; without
+      # this, git refuses it, and package.sh needs the commit's time.
+      - name: Trust the workspace
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - name: Install Rust
         run: rustup default stable && rustup component add clippy rustfmt
       - name: Check the tag matches Cargo.toml
