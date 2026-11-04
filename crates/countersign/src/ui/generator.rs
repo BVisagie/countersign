@@ -24,6 +24,9 @@ pub struct Generator {
     controls: Controls,
     pending: RefCell<Option<glib::SourceId>>,
     generation: Cell<u64>,
+    /// Set while the controls show stored options, so that is not a change.
+    applying: Cell<bool>,
+    remember: RefCell<Option<glib::SourceId>>,
 }
 
 struct Controls {
@@ -61,6 +64,22 @@ impl Controls {
             capitalize: self.capitalize.is_active(),
             include_number: self.include_number.is_active(),
         }
+    }
+
+    fn apply(&self, options: &GenerateOptions) {
+        self.mode.set_active_name(Some(if options.passphrase { "passphrase" } else { "password" }));
+        self.length.set_value(f64::from(options.length));
+        self.uppercase.set_active(options.uppercase);
+        self.lowercase.set_active(options.lowercase);
+        self.number.set_active(options.number);
+        self.special.set_active(options.special);
+        self.min_number.set_value(f64::from(options.min_number));
+        self.min_special.set_value(f64::from(options.min_special));
+        self.avoid_ambiguous.set_active(options.avoid_ambiguous);
+        self.words.set_value(f64::from(options.words));
+        self.separator.set_text(&options.separator);
+        self.capitalize.set_active(options.capitalize);
+        self.include_number.set_active(options.include_number);
     }
 }
 
@@ -207,6 +226,8 @@ impl Generator {
             },
             pending: RefCell::default(),
             generation: Cell::new(0),
+            applying: Cell::new(false),
+            remember: RefCell::default(),
         });
         generator.connect(&regenerate, &copy);
         generator.show_mode();
@@ -217,9 +238,12 @@ impl Generator {
         let c = &self.controls;
         let weak = Rc::downgrade(self);
         let changed = move || {
-            if let Some(me) = weak.upgrade() {
+            if let Some(me) = weak.upgrade()
+                && !me.applying.get()
+            {
                 me.show_mode();
                 me.schedule();
+                me.remember();
             }
         };
         let changed: Rc<dyn Fn()> = Rc::new(changed);
@@ -284,11 +308,35 @@ impl Generator {
         self.copy.grab_focus();
     }
 
-    /// Generates a value the first time the page is shown.
+    /// Generates a value the first time the page is shown, and after a
+    /// lock, with the options last used.
     pub fn ensure_value(self: &Rc<Self>) {
         if self.current.borrow().is_none() {
+            let options = self.app.settings.borrow().generator.clone();
+            self.applying.set(true);
+            self.controls.apply(&options);
+            self.applying.set(false);
+            self.show_mode();
             self.generate();
         }
+    }
+
+    /// Stores the options shortly after they stop changing.
+    fn remember(self: &Rc<Self>) {
+        if let Some(source) = self.remember.borrow_mut().take() {
+            source.remove();
+        }
+        let weak = Rc::downgrade(self);
+        let source = glib::timeout_add_local_once(Duration::from_millis(500), move || {
+            let Some(me) = weak.upgrade() else { return };
+            me.remember.borrow_mut().take();
+            let current = me.app.settings.borrow().clone();
+            let generator = me.controls.options();
+            if generator != current.generator {
+                super::prefs::save(&me.app, countersign_ipc::Settings { generator, ..current });
+            }
+        });
+        *self.remember.borrow_mut() = Some(source);
     }
 
     fn schedule(self: &Rc<Self>) {

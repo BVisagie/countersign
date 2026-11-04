@@ -9,7 +9,7 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 use std::rc::Rc;
 
 use adw::prelude::*;
-use countersign_ipc::{GenerateOptions, ItemKind, Request, Response, VaultSnapshot};
+use countersign_ipc::{ItemKind, Request, Response, VaultSnapshot};
 use gtk::glib;
 use serde_json::{Value, json};
 use zeroize::Zeroizing;
@@ -226,7 +226,8 @@ impl Editor {
                     generate.connect_clicked(move |_| {
                         let (app, pass) = (app.clone(), pass.clone());
                         glib::spawn_future_local(async move {
-                            let options = GenerateOptions::default();
+                            // The options last used on the generator page.
+                            let options = app.settings.borrow().generator.clone();
                             if let Ok(Response::Secret { value }) =
                                 app.request(Request::Generate { options }).await
                                 && let Some(pass) = pass.upgrade()
