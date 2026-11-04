@@ -34,5 +34,3 @@ Known limitations:
   account.
 - SSH keys cannot be created, and an existing key's key material cannot be
   changed, because the official CLI cannot generate or import keys.
-- An edit made right after unlocking was once seen to show its old value
-  until the next sync.

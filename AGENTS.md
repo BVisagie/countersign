@@ -61,10 +61,11 @@ Countersign that is already running; it answers from the real vault. Ask
 for it to be quit first. Do not use `dbus-run-session` to get around it: the
 desktop portal the private bus starts can crash when the run exits.
 
-The contract test (`crates/countersign-bw/tests/contract.rs`) and any manual
-CLI testing use a throwaway Bitwarden account only. The test documents its
-environment variables; it creates and permanently deletes objects named
-`countersign-contract …`. Bitwarden requires Premium for one-time codes,
+The contract tests (`crates/countersign-bw/tests/contract.rs` for the CLI,
+`crates/countersign-daemon/src/contract.rs` for the daemon's index) and any
+manual CLI testing use a throwaway Bitwarden account only. The CLI test
+documents the environment variables both use; they create and permanently
+delete objects named `countersign-contract …`. Bitwarden requires Premium for one-time codes,
 attachments and file Sends, so a free test account reports those as
 unavailable.
 

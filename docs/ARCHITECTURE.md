@@ -46,8 +46,19 @@ request to the running server costs milliseconds
 The CLI answers one request at a time on its connection, and a sync takes
 0.2 to 2 seconds, so the daemon syncs ten seconds after unlocking, after the
 usual unlock-then-copy. `bw serve` sometimes answers "Not found." for an
-item it created a moment earlier, so the daemon uses the item that create
-returns instead of reading it back.
+item or folder it created a moment earlier, so the daemon uses what a change
+returns instead of reading it back, and asks again for up to two seconds
+when a call on an object the index knows finds nothing.
+
+`bw serve` 2026.10.1 also often lists items and folders as they were before
+the latest change: an edited item keeps its old name, a renamed folder its
+old name, a new one is missing. The list stays behind until a later change
+or a sync, and reading an item back can be behind for a moment too. So the
+daemon keeps what each change left, from the change's reply or, for the
+trash and attachments, from its own index, and lays it over every list
+until the list catches up. A newer revision from elsewhere wins.
+`crates/countersign-daemon/src/contract.rs` checks this against the real
+CLI.
 
 The CLI refuses to serve until an account is logged in, and has no login
 route, so sign-in uses `bw login` itself.
