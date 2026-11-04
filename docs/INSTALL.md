@@ -7,7 +7,7 @@ yet; you build it from source with one script.
 
 - **A Hyprland desktop with GTK 4.18+ and libadwaita 1.7+.** Omarchy already
   has both, and `gtk4-layer-shell`, which quick access needs.
-- **Rust 1.92 or newer**, with Cargo, from rustup or mise.
+- **Rust 1.99 or newer**, with Cargo, from rustup or mise.
 - **Build tools and libraries.** On Omarchy or Arch:
 
   ```bash

@@ -56,6 +56,11 @@ daemons in isolated folders:
 export COUNTERSIGN_RUNTIME_DIR=/tmp/cs-dev/run XDG_DATA_HOME=/tmp/cs-dev/data XDG_CONFIG_HOME=/tmp/cs-dev/config
 ```
 
+These folders do not stop a launch from handing over to an installed
+Countersign that is already running; it answers from the real vault. Ask
+for it to be quit first. Do not use `dbus-run-session` to get around it: the
+desktop portal the private bus starts can crash when the run exits.
+
 The contract test (`crates/countersign-bw/tests/contract.rs`) and any manual
 CLI testing use a throwaway Bitwarden account only. The test documents its
 environment variables; it creates and permanently deletes objects named
