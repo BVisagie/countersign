@@ -71,7 +71,9 @@ Two Send commands also run one-off, with the session key in the child's
 environment. `bw serve` has no route for file Sends, so `bw send create`
 reads its request on stdin. And `bw serve` 2026.10.1 answers `/send/list`
 from a cache it never refreshes: creates, edits, deletes and syncs do not
-show there until the server restarts. `bw send list` reads the stored vault
+show there until the server restarts
+([bitwarden/clients#24434](https://github.com/bitwarden/clients/issues/24434)).
+`bw send list` reads the stored vault
 each time, at the usual two to three seconds, so the app updates its Send
 list from each change's reply and lists again only after a sync or unlock.
 
