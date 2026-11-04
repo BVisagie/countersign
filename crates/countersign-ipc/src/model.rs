@@ -109,7 +109,11 @@ pub fn summarize(item: &Value) -> Option<ItemSummary> {
                 ["firstName", "lastName"].iter().filter_map(|k| text(&item["identity"][*k])).collect();
             if parts.is_empty() { text(&item["identity"]["email"]) } else { Some(parts.join(" ")) }
         }
-        ItemKind::SshKey => text(&item["sshKey"]["keyFingerprint"]),
+        ItemKind::SshKey => text(&item["sshKey"]["publicKey"])
+            .as_deref()
+            .and_then(ssh_key_type)
+            .map(|kind| format!("{kind} key"))
+            .or_else(|| text(&item["sshKey"]["keyFingerprint"])),
         ItemKind::SecureNote => None,
     };
     let collection_ids =
@@ -138,6 +142,19 @@ pub fn summarize(item: &Value) -> Option<ItemSummary> {
 
 /// The lower-case host of a web address, without user info or port.
 /// Addresses without a scheme are treated as hosts, as Bitwarden does.
+/// The algorithm of an OpenSSH public key, named as `ssh-keygen -l` does.
+fn ssh_key_type(public_key: &str) -> Option<&'static str> {
+    Some(match public_key.split_whitespace().next()? {
+        "ssh-ed25519" => "ED25519",
+        "sk-ssh-ed25519@openssh.com" => "ED25519-SK",
+        "ssh-rsa" => "RSA",
+        "ecdsa-sha2-nistp256" | "ecdsa-sha2-nistp384" | "ecdsa-sha2-nistp521" => "ECDSA",
+        "sk-ecdsa-sha2-nistp256@openssh.com" => "ECDSA-SK",
+        "ssh-dss" => "DSA",
+        _ => return None,
+    })
+}
+
 pub(crate) fn host_of(uri: &str) -> Option<String> {
     let rest = match uri.split_once("://") {
         Some((scheme, rest)) if scheme.chars().all(|c| c.is_ascii_alphanumeric() || "+-.".contains(c)) => {
@@ -412,6 +429,19 @@ mod tests {
         assert_eq!(host_of("https://[::1]:8080/").as_deref(), Some("[::1]"));
         assert_eq!(host_of("not a url"), None);
         assert_eq!(host_of("a b://x"), None);
+    }
+
+    #[test]
+    fn ssh_keys_are_summarized_by_their_type() {
+        let key = |public: &str| {
+            json!({"id": "k", "type": 5, "name": "Deploy key",
+                   "sshKey": {"publicKey": public, "keyFingerprint": "SHA256:abc"}})
+        };
+        let subtitle = |public: &str| summarize(&key(public)).and_then(|s| s.subtitle);
+        assert_eq!(subtitle("ssh-ed25519 AAAAC3Nza alex@laptop").as_deref(), Some("ED25519 key"));
+        assert_eq!(subtitle("ecdsa-sha2-nistp384 AAAA").as_deref(), Some("ECDSA key"));
+        // An unknown algorithm falls back to the fingerprint.
+        assert_eq!(subtitle("ssh-new AAAA").as_deref(), Some("SHA256:abc"));
     }
 
     #[test]
