@@ -1017,10 +1017,13 @@ impl MainWindow {
         };
         if !vault.folders.is_empty() {
             push_title(&mut filters, "FOLDERS");
-            for folder in &vault.folders {
-                let f = Filter::Folder(Some(folder.id.clone()));
+            for (index, name, depth) in folder_tree(&vault.folders) {
+                let f = Filter::Folder(Some(vault.folders[index].id.clone()));
                 let n = count(&f);
-                add_row(&mut filters, f, "folder-symbolic", &folder.name, Some(n));
+                let row = nav_row("folder-symbolic", name, Some(n));
+                row.set_margin_start(depth as i32 * 16);
+                self.sidebar.append(&row);
+                filters.push(f);
             }
             let none = Filter::Folder(None);
             let n = count(&none);
@@ -1247,6 +1250,45 @@ impl MainWindow {
     }
 }
 
+/// Folders in sidebar order, as Bitwarden nests them: each with its index
+/// in `folders`, the name to show and its depth. A folder named
+/// `Work/Clients` sits under `Work`, shown as `Clients`, when a folder named
+/// `Work` exists; without one it stays at the top as `Work/Clients`.
+fn folder_tree(folders: &[countersign_ipc::Folder]) -> Vec<(usize, &str, usize)> {
+    let by_name: std::collections::HashMap<&str, usize> =
+        folders.iter().enumerate().map(|(i, f)| (f.name.as_str(), i)).collect();
+    // The nearest folder whose name is a prefix of this one, up to a "/".
+    let parent = |i: usize| {
+        let name = folders[i].name.as_str();
+        name.match_indices('/')
+            .rev()
+            .filter(|(at, _)| at + 1 < name.len())
+            .find_map(|(at, _)| by_name.get(&name[..at]).copied().filter(|&p| p != i).map(|p| (p, at)))
+    };
+    let mut children: Vec<Vec<(usize, &str)>> = vec![Vec::new(); folders.len()];
+    let mut roots = Vec::new();
+    for (i, folder) in folders.iter().enumerate() {
+        match parent(i) {
+            Some((p, at)) => children[p].push((i, &folder.name[at + 1..])),
+            None => roots.push((i, folder.name.as_str())),
+        }
+    }
+    fn walk<'a>(
+        nodes: &[(usize, &'a str)],
+        depth: usize,
+        children: &[Vec<(usize, &'a str)>],
+        out: &mut Vec<(usize, &'a str, usize)>,
+    ) {
+        for &(i, name) in nodes {
+            out.push((i, name, depth));
+            walk(&children[i], depth + 1, children, out);
+        }
+    }
+    let mut out = Vec::with_capacity(folders.len());
+    walk(&roots, 0, &children, &mut out);
+    out
+}
+
 /// The tool pages pinned below the sidebar's filters.
 const TOOLS: [(Filter, &str, &str); 2] = [
     (Filter::Generator, "dialog-password-symbolic", "Generator"),
@@ -1418,7 +1460,7 @@ impl View for MainWindow {
 mod tests {
     use countersign_ipc::{CliState, Status, VaultState};
 
-    use super::page_for;
+    use super::{folder_tree, page_for};
 
     fn status(vault: VaultState) -> Status {
         Status {
@@ -1463,6 +1505,30 @@ mod tests {
         // Once it answers: signed out, or still locked if it failed.
         assert_eq!(page_for(&status(LoggedOut), false, false, Some("loading")), "signin");
         assert_eq!(page_for(&status(Locked), false, false, Some("loading")), "locked");
+    }
+
+    #[test]
+    fn folders_nest_under_folders_named_as_their_prefix() {
+        let folders: Vec<countersign_ipc::Folder> =
+            ["Work", "Work/Clients", "Work/Clients/Acme", "Home/Garden", "Personal", "Work/Clients/"]
+                .iter()
+                .enumerate()
+                .map(|(i, name)| countersign_ipc::Folder { id: i.to_string(), name: (*name).into() })
+                .collect();
+        let tree: Vec<(&str, usize)> = folder_tree(&folders).into_iter().map(|(_, n, d)| (n, d)).collect();
+        assert_eq!(
+            tree,
+            [
+                ("Work", 0),
+                ("Clients", 1),
+                ("Acme", 2),
+                // A trailing slash names nothing beneath its parent.
+                ("Clients/", 1),
+                // No folder named "Home", so it stays whole at the top.
+                ("Home/Garden", 0),
+                ("Personal", 0),
+            ]
+        );
     }
 
     #[test]
