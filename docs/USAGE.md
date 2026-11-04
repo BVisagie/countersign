@@ -209,7 +209,9 @@ Open them with `Ctrl+,` or the menu. Changes apply as you make them.
 
 **Desktop** has the Hyprland lines with copy buttons. **Account** signs you
 out. **Bitwarden CLI** shows the CLI in use and lets you choose another; see
-[INSTALL.md](INSTALL.md#use-your-own-cli).
+[INSTALL.md](INSTALL.md#use-your-own-cli). After a Countersign update
+that pins a newer CLI, it also offers to install that release; see
+[INSTALL.md](INSTALL.md#versions).
 
 ## The tray
 

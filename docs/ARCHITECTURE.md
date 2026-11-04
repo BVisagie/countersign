@@ -107,6 +107,12 @@ exactly the pinned version, and moves it into
 you configured is never replaced; installing switches Countersign to the
 managed copy.
 
+When a Countersign update raises the pin, Settings offers the new release in
+place of the older managed copy. The download and checks run with the vault
+still open. Only then does the daemon lock, stopping every CLI process
+started from the old copy, move the new one in and remove the older
+releases.
+
 ## The app
 
 `countersign` is a single-instance GTK application that stays running in the

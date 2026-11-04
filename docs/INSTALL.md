@@ -111,9 +111,14 @@ Countersign uses the first of:
 The minimum, 2026.10.0, is the oldest release Countersign has been tested
 against. There is no maximum: newer releases are accepted. The copy
 Countersign installs is pinned to one release, because its checksum is
-recorded in Countersign's source. A Countersign update can raise the pin,
-but Countersign keeps using the copy it installed before; installing the
-newer release from Settings is [on the roadmap](ROADMAP.md#known-limitations).
+recorded in Countersign's source.
+
+A Countersign update can raise the pin. Countersign keeps using the copy it
+installed before until you choose **Install** under **Settings → Bitwarden
+CLI**, next to the newer version. The vault stays open while the download
+is checked, then Countersign locks, switches to the new copy and removes the
+old one. If the download fails, nothing changes. A CLI you chose yourself is
+never offered an update; update it as you normally would.
 
 ### Your own `bw` stays separate
 

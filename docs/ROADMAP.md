@@ -10,9 +10,6 @@ it from source ([INSTALL.md](INSTALL.md)).
   Verification codes, the code after the password, attachments and file
   Sends are built, but so far only tested against a free account, which the
   CLI refuses them for.
-- **A newer pinned CLI cannot be installed yet.** When a Countersign update
-  raises the pinned CLI release, Countersign keeps using the copy it
-  installed before. Settings will offer to install the new one.
 - **SSH keys cannot be created**, and an existing key's key material cannot
   be changed, because the official CLI cannot generate or import keys.
   Countersign will add both if the CLI does.
