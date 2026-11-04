@@ -36,6 +36,10 @@ development build in isolated folders:
 export COUNTERSIGN_RUNTIME_DIR=/tmp/cs-dev/run XDG_DATA_HOME=/tmp/cs-dev/data XDG_CONFIG_HOME=/tmp/cs-dev/config
 ```
 
+Quit your installed Countersign first, with `Ctrl+Q` or the tray's **Quit**.
+While it runs, launching another build only hands the command to it, and it
+answers from your real vault, whatever these folders say.
+
 `COUNTERSIGN_DEMO=1` runs the app on a fictional vault, without the CLI or
 an account. Use a throwaway Bitwarden account for anything that needs the
 real CLI, including the contract test in
