@@ -1,0 +1,18 @@
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      cargo:
+        update-types: [minor, patch]
+    ignore:
+      # The tray library ksni still depends on zbus 5. Moving the daemon to
+      # zbus 6 before ksni does would build two copies of zbus.
+      - dependency-name: zbus
+        update-types: [version-update:semver-major]
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

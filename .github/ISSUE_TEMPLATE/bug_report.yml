@@ -1,0 +1,49 @@
+name: Bug report
+description: Something in Countersign does not work as described.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Never paste passwords, session keys, API keys, item contents or other vault data here. Replace them with placeholders. Report security problems [privately](https://github.com/BVisagie/countersign/security/advisories/new) instead.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open quick access
+        2. …
+  - type: input
+    id: countersign
+    attributes:
+      label: Countersign version
+      description: "`countersign --version`, or a commit if you built from source."
+    validations:
+      required: true
+  - type: input
+    id: cli
+    attributes:
+      label: Bitwarden CLI version
+      description: Shown under Settings → Bitwarden CLI, or `bw --version`. Say whether it is the copy Countersign installed.
+    validations:
+      required: true
+  - type: input
+    id: desktop
+    attributes:
+      label: Desktop
+      description: "Omarchy version (`omarchy-version`), or your distribution and Hyprland version."
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Output
+      description: "Output of `countersign` run in a terminal, if it says anything. Check it for vault data first."
+      render: text

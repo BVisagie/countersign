@@ -88,6 +88,8 @@ pub fn present_about(parent: Option<&gtk::Widget>) {
         .application_icon(super::SENTRY_ICON)
         .version(env!("CARGO_PKG_VERSION"))
         .developer_name("BVisagie")
+        .website(env!("CARGO_PKG_REPOSITORY"))
+        .issue_url(concat!(env!("CARGO_PKG_REPOSITORY"), "/issues"))
         .comments(
             "A keyboard-first Bitwarden app for Omarchy, built on the official Bitwarden CLI. \
              An independent project, not affiliated with or endorsed by Bitwarden, Inc.",
