@@ -27,3 +27,6 @@ perf.data*
 *.profdata
 /coverage
 lcov.info
+
+# Release archives from scripts/package.sh
+/dist
