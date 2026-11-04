@@ -113,6 +113,9 @@ button.cs-favorite.on { color: var(--warning-color); }
 .cs-field-label { font-size: 0.82em; color: var(--cs-muted); }
 .cs-field-value { font-size: 1em; }
 .cs-field-value.code { font-size: 1.35em; font-weight: 700; letter-spacing: 0.08em; color: var(--accent-color); }
+/* Masks: the dots fill their monospace cells, so space them apart. */
+.cs-field-value.secret, text.cs-masked { letter-spacing: 0.25em; }
+text.cs-masked placeholder { letter-spacing: 0; }
 .cs-field-value.code.expiring { color: var(--warning-color); }
 .cs-field button.flat { min-width: 28px; min-height: 28px; padding: 0; color: var(--cs-dim); }
 .cs-field button.flat:hover { color: var(--window-fg-color); background-color: var(--cs-hover); }

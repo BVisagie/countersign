@@ -576,7 +576,7 @@ impl Detail {
     }
 
     fn totp_field(self: &Rc<Self>, id: &str) -> gtk::Box {
-        let code = label("●●● ●●●", &["cs-field-value", "code"]);
+        let code = label("●●● ●●●", &["cs-field-value", "code", "secret"]);
         let (row, buttons) = self.row("Verification code", code.upcast_ref());
         let countdown = gtk::Label::new(None);
         countdown.add_css_class("cs-meta");
@@ -620,6 +620,7 @@ impl Detail {
                                 digits.to_owned()
                             };
                             code.set_label(&shown);
+                            code.remove_css_class("secret");
                             ring.set_max_value(f64::from(totp.period));
                             remaining.set(totp.remaining);
                             ring.set_value(f64::from(totp.remaining));
@@ -628,16 +629,14 @@ impl Detail {
                         }
                         Err(e) if e.code == ErrorCode::Premium => {
                             code.set_label("Needs Bitwarden Premium");
-                            code.remove_css_class("code");
-                            code.add_css_class("cs-meta");
+                            code.set_css_classes(&["cs-field-value", "cs-meta"]);
                             countdown.set_visible(false);
                             ring.set_visible(false);
                             copy.set_sensitive(false);
                         }
                         Err(e) if e.code == ErrorCode::RepromptRequired => {
                             code.set_label("Protected · use copy to unlock");
-                            code.remove_css_class("code");
-                            code.add_css_class("cs-meta");
+                            code.set_css_classes(&["cs-field-value", "cs-meta"]);
                             countdown.set_visible(false);
                             ring.set_visible(false);
                         }

@@ -92,6 +92,7 @@ impl Unlock {
             .placeholder_text("Master password")
             .margin_top(10)
             .build();
+        super::space_masked(&entry);
         entry.update_property(&[gtk::accessible::Property::Label("Master password")]);
         let error = label("", &["cs-error"]);
         error.set_visible(false);
@@ -511,6 +512,7 @@ impl SignIn {
     fn ask_api_key(self: &Rc<Self>, app: &Rc<App>, parent: &gtk::Widget) {
         let client_id = adw::EntryRow::builder().title("client_id").build();
         let client_secret = adw::PasswordEntryRow::builder().title("client_secret").build();
+        super::space_masked(&client_secret);
         let list = gtk::ListBox::builder()
             .css_classes(["boxed-list"])
             .selection_mode(gtk::SelectionMode::None)

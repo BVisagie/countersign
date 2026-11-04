@@ -46,6 +46,24 @@ pub fn set_monogram(tile: &gtk::Label, name: &str, large: bool) {
     tile.set_halign(gtk::Align::Center);
 }
 
+/// Spaces out the dots of a password entry while its text is hidden. In a
+/// monospace font the dots fill their cells and run together. The spacing
+/// goes when the peek button shows the text.
+pub fn space_masked(entry: &impl IsA<gtk::Editable>) {
+    let Some(text) = entry.as_ref().delegate().and_then(|d| d.downcast::<gtk::Text>().ok()) else {
+        return;
+    };
+    let update = |text: &gtk::Text| {
+        if text.property::<bool>("visibility") {
+            text.remove_css_class("cs-masked");
+        } else {
+            text.add_css_class("cs-masked");
+        }
+    };
+    update(&text);
+    text.connect_visibility_notify(update);
+}
+
 pub fn icon_button(icon: &str, tooltip: &str) -> gtk::Button {
     let button = gtk::Button::from_icon_name(icon);
     button.set_tooltip_text(Some(tooltip));
@@ -113,4 +131,37 @@ pub fn short_date(rfc3339: &str) -> String {
         .and_then(|d| d.format("%-d %b %Y"))
         .map(|s| s.to_string())
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn masked(entry: &impl IsA<gtk::Editable>) -> bool {
+        entry.as_ref().delegate().expect("a text delegate").has_css_class("cs-masked")
+    }
+
+    fn peek(entry: &impl IsA<gtk::Editable>) {
+        let text = entry.as_ref().delegate().expect("a text delegate");
+        let shown = text.property::<bool>("visibility");
+        text.set_property("visibility", !shown);
+    }
+
+    #[test]
+    #[ignore = "needs a display"]
+    fn masked_spacing_follows_the_peek() {
+        gtk::init().expect("a display");
+        adw::init().expect("libadwaita");
+        let entry = gtk::PasswordEntry::new();
+        let row = adw::PasswordEntryRow::new();
+        space_masked(&entry);
+        space_masked(&row);
+        for editable in [entry.upcast_ref::<gtk::Editable>(), row.upcast_ref()] {
+            assert!(masked(editable));
+            peek(editable);
+            assert!(!masked(editable));
+            peek(editable);
+            assert!(masked(editable));
+        }
+    }
 }
