@@ -1131,9 +1131,12 @@ impl MainWindow {
     }
 
     /// While the editor is open the list stays put: a sync that rebuilds
-    /// it must not move the selection and close the editor.
+    /// it must not move the selection and close the editor. It takes no
+    /// clicks or focus, but is not dimmed, so the item being edited stays
+    /// visibly selected.
     pub fn set_editing(&self, editing: bool) {
-        self.list.view.set_sensitive(!editing);
+        self.list.view.set_can_target(!editing);
+        self.list.view.set_can_focus(!editing);
     }
 
     /// Asks for a folder name: a new folder, or a rename of `folder`.
