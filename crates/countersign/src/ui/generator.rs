@@ -11,6 +11,8 @@ use adw::prelude::*;
 use countersign_ipc::{GenerateOptions, Request, Response, Secret};
 use gtk::glib;
 
+use zeroize::Zeroizing;
+
 use super::label;
 use crate::app::App;
 
@@ -96,10 +98,11 @@ fn switch(title: &str, active: bool) -> adw::SwitchRow {
 }
 
 /// Colors digits and symbols, as Bitwarden does, so similar characters are
-/// easier to tell apart.
-fn markup(value: &str) -> String {
+/// easier to tell apart. The markup holds the secret, so it is wiped when
+/// dropped.
+pub(super) fn markup(value: &str) -> Zeroizing<String> {
     let (digit, symbol) = crate::theme::highlights();
-    let mut out = String::with_capacity(value.len() * 2);
+    let mut out = Zeroizing::new(String::with_capacity(value.len() * 2));
     for c in value.chars() {
         let escaped = glib::markup_escape_text(&c.to_string());
         if c.is_ascii_digit() {

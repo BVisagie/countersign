@@ -484,6 +484,7 @@ impl Detail {
         reveal.connect_clicked(move |button| {
             let Some(me) = me.upgrade() else { return };
             if shown.get() {
+                value.set_use_markup(false);
                 value.set_label(MASK);
                 value.set_selectable(false);
                 value.add_css_class("secret");
@@ -495,13 +496,21 @@ impl Detail {
                 (value.clone(), button.clone(), shown.clone(), field.clone(), id.clone());
             let generation = me.generation.get();
             glib::spawn_future_local(async move {
+                // Passwords color digits and symbols, as the generator does;
+                // numbers and keys would only be all one color.
+                let colored =
+                    matches!(field, Field::Password | Field::PasswordHistory { .. } | Field::Custom { .. });
                 let result = me.app.reveal(button.upcast_ref(), &id, field).await;
                 if me.generation.get() != generation {
                     return;
                 }
                 match result {
                     Ok(Some(secret)) => {
-                        value.set_label(secret.expose());
+                        if colored {
+                            value.set_markup(&super::generator::markup(secret.expose()));
+                        } else {
+                            value.set_label(secret.expose());
+                        }
                         value.remove_css_class("secret");
                         button.set_icon_name("view-conceal-symbolic");
                         shown.set(true);
@@ -514,6 +523,7 @@ impl Detail {
                             if weak.upgrade().is_none_or(|me| me.generation.get() != generation) {
                                 return;
                             }
+                            value.set_use_markup(false);
                             value.set_label(MASK);
                             value.set_selectable(false);
                             value.add_css_class("secret");
