@@ -10,6 +10,9 @@ lists what each release changed.
   They are built, but so far only tested against a free account, which the
   CLI refuses them for. Verification codes, including the code after the
   password, have been checked on a Premium account.
+- **The ARM (aarch64) build has not been tried on an ARM computer.** Each
+  release builds and tests it on ARM and starts it offscreen on the demo
+  vault, but nobody has used it on Omarchy on ARM yet.
 - **SSH keys cannot be created**, and an existing key's key material cannot
   be changed, because the official CLI cannot generate or import keys.
   Countersign will add both if the CLI does.
