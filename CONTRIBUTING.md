@@ -42,8 +42,9 @@ answers from your real vault, whatever these folders say.
 
 `COUNTERSIGN_DEMO=1` runs the app on a fictional vault, without the CLI or
 an account. Use a throwaway Bitwarden account for anything that needs the
-real CLI, including the contract test in
-`crates/countersign-bw/tests/contract.rs`.
+real CLI, including the contract tests in
+`crates/countersign-bw/tests/contract.rs` and
+`crates/countersign-daemon/src/contract.rs`.
 
 ## Rules a change must keep
 

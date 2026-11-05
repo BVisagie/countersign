@@ -57,33 +57,56 @@ Early: 0.1.0 is the first release. It is built and tested on Omarchy.
 
 ## Quick start
 
-On Omarchy, download the latest release, check it and install it for your
-user:
+You need Omarchy on an Intel or AMD (x86_64) computer, and a Bitwarden
+account. On another Hyprland desktop, or to run the latest code,
+[build it from source](docs/INSTALL.md#build-from-source) instead.
 
-```bash
-curl -LO https://github.com/BVisagie/countersign/releases/latest/download/countersign-x86_64.tar.gz
-curl -LO https://github.com/BVisagie/countersign/releases/latest/download/SHA256SUMS
-sha256sum -c SHA256SUMS
-tar xf countersign-x86_64.tar.gz
-countersign-x86_64/scripts/install.sh
-```
+1. **Download and install.** Run these in a terminal:
 
-On another Hyprland desktop with GTK 4.18+ and libadwaita 1.7+, or to run
-the latest code, [build it from source](docs/INSTALL.md#build-from-source).
+   ```bash
+   mkdir -p ~/Downloads/countersign && cd ~/Downloads/countersign
+   curl -LO https://github.com/BVisagie/countersign/releases/latest/download/countersign-x86_64.tar.gz
+   curl -LO https://github.com/BVisagie/countersign/releases/latest/download/SHA256SUMS
+   sha256sum -c SHA256SUMS
+   tar xf countersign-x86_64.tar.gz
+   countersign-x86_64/scripts/install.sh
+   ```
 
-Add quick access and autostart to Hyprland:
+   `sha256sum -c` checks the download and should say
+   `countersign-x86_64.tar.gz: OK`. The install script installs Countersign
+   for your user. Omarchy lacks one library it needs, `vte4`, so the script
+   offers to install it with pacman, which asks for your password first.
 
-```lua
--- ~/.config/hypr/bindings.lua
-o.bind("SUPER + SHIFT + P", "Passwords", "countersign --quick")
--- ~/.config/hypr/autostart.lua
-o.launch_on_start("countersign --background")
-```
+2. **Open Countersign** from your app launcher, or run `countersign`.
 
-Open Countersign. It offers to install the official Bitwarden CLI, checked
-against the SHA-256 recorded in its source, then signs you in. Countersign
-works with the official CLI **2026.10.0 or newer**, and installs 2026.10.1
-when you let it.
+3. **Install the Bitwarden CLI.** Countersign never encrypts your vault or
+   talks to Bitwarden's servers itself. Bitwarden's own command-line program,
+   the Bitwarden CLI, does both, and Countersign is the window around it.
+   Choose **Install the official CLI**: Countersign downloads it and checks it
+   against a checksum recorded in its source. Countersign works with CLI
+   **2026.10.0 or newer**, and installs 2026.10.1.
+
+4. **Sign in.** Choose your server (US cloud, EU cloud or self-hosted), sign
+   in with your email or an API key, then unlock with your master password.
+   [First run](docs/USAGE.md#first-run) explains each choice.
+
+5. **Add a key for quick access.** Add these lines to your Hyprland
+   configuration:
+
+   ```lua
+   -- ~/.config/hypr/bindings.lua
+   o.rebind("SUPER + SHIFT + P", "Passwords", "countersign --quick")
+   -- ~/.config/hypr/autostart.lua
+   o.launch_on_start("countersign --background")
+   ```
+
+   The first line makes `Super+Shift+P` open quick access, in place of
+   Omarchy's Google Photos shortcut. Hyprland picks it up when you save.
+   The second starts Countersign when you log in, so quick access opens
+   instantly.
+
+Now press `Super+Shift+P`, type a few letters of a site and press `Enter`:
+the password is on the clipboard, and it clears itself after 30 seconds.
 
 - [Installing](docs/INSTALL.md): requirements, choosing a CLI, updating,
   uninstalling and troubleshooting.
