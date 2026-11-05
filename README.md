@@ -7,7 +7,7 @@
 A fast, keyboard-first desktop app for Bitwarden on Omarchy and other
 Hyprland desktops, written in Rust and built on the official Bitwarden CLI.
 
-![The main window in Omarchy's Cumulus theme](docs/screenshots/main.png)
+![The main window in the InkyPinky theme](docs/screenshots/main.png)
 
 Countersign is an independent project, not affiliated with or endorsed by
 Bitwarden, Inc. It never implements Bitwarden's encryption and never talks to
@@ -46,7 +46,9 @@ interface and the desktop integration around it.
 | --- | --- |
 | ![The item editor](docs/screenshots/edit.png) | ![The Send page](docs/screenshots/sends.png) |
 
-Screenshots use a fictional demo vault; see `scripts/screenshots.sh`.
+Screenshots use a fictional demo vault; see `scripts/screenshots.sh`. Most
+are in HANCORE's [InkyPinky](https://github.com/HANCORE-linux/omarchy-inkypinky-theme)
+theme for Omarchy.
 
 ## Status
 
