@@ -67,13 +67,12 @@ account. On another Hyprland desktop, or to run the latest code,
    mkdir -p ~/Downloads/countersign && cd ~/Downloads/countersign
    curl -LO https://github.com/BVisagie/countersign/releases/latest/download/countersign-x86_64.tar.gz
    curl -LO https://github.com/BVisagie/countersign/releases/latest/download/SHA256SUMS
-   sha256sum -c SHA256SUMS
-   tar xf countersign-x86_64.tar.gz
-   countersign-x86_64/scripts/install.sh
+   sha256sum -c SHA256SUMS && tar xf countersign-x86_64.tar.gz && countersign-x86_64/scripts/install.sh
    ```
 
    `sha256sum -c` checks the download and should say
-   `countersign-x86_64.tar.gz: OK`. The install script installs Countersign
+   `countersign-x86_64.tar.gz: OK`; if it does not, nothing is unpacked or
+   installed. The install script installs Countersign
    for your user. Omarchy lacks one library it needs, `vte4`, so the script
    offers to install it with pacman, which asks for your password first.
 
@@ -82,8 +81,8 @@ account. On another Hyprland desktop, or to run the latest code,
 3. **Install the Bitwarden CLI.** Countersign never encrypts your vault or
    talks to Bitwarden's servers itself. Bitwarden's own command-line program,
    the Bitwarden CLI, does both, and Countersign is the window around it.
-   Choose **Install the official CLI**: Countersign downloads it and checks it
-   against a checksum recorded in its source. Countersign works with CLI
+   If it asks, choose **Install the official CLI**: Countersign downloads it
+   and checks it against a checksum recorded in its source. Countersign works with CLI
    **2026.10.0 or newer**, and installs 2026.10.1.
 
 4. **Sign in.** Choose your server (US cloud, EU cloud or self-hosted), sign

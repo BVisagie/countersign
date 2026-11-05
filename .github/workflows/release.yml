@@ -83,9 +83,7 @@ jobs:
           mkdir -p ~/Downloads/countersign && cd ~/Downloads/countersign
           curl -LO $repo/releases/download/$GITHUB_REF_NAME/countersign-x86_64.tar.gz
           curl -LO $repo/releases/download/$GITHUB_REF_NAME/SHA256SUMS
-          sha256sum -c SHA256SUMS
-          tar xf countersign-x86_64.tar.gz
-          countersign-x86_64/scripts/install.sh
+          sha256sum -c SHA256SUMS && tar xf countersign-x86_64.tar.gz && countersign-x86_64/scripts/install.sh
           \`\`\`
 
           \`sha256sum -c\` should say \`countersign-x86_64.tar.gz: OK\`. Then open

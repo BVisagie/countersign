@@ -36,14 +36,12 @@ its own, check it, unpack it and install it:
 mkdir -p ~/Downloads/countersign && cd ~/Downloads/countersign
 curl -LO https://github.com/BVisagie/countersign/releases/latest/download/countersign-x86_64.tar.gz
 curl -LO https://github.com/BVisagie/countersign/releases/latest/download/SHA256SUMS
-sha256sum -c SHA256SUMS
-tar xf countersign-x86_64.tar.gz
-countersign-x86_64/scripts/install.sh
+sha256sum -c SHA256SUMS && tar xf countersign-x86_64.tar.gz && countersign-x86_64/scripts/install.sh
 ```
 
 `sha256sum -c` should say `countersign-x86_64.tar.gz: OK`. If it says
-`FAILED`, the download is damaged or incomplete: download both files again,
-and do not install it. If a library Countersign needs is missing, the
+`FAILED`, the download is damaged or incomplete, and the last line stops
+there without unpacking or installing it: download both files again. If a library Countersign needs is missing, the
 install script offers to install it with pacman, which asks for your
 password first. On Omarchy that is `vte4`. See
 [What the install script does](#what-the-install-script-does).
