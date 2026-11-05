@@ -2,9 +2,10 @@
 
 ## First run
 
-1. **The Bitwarden CLI.** If Countersign cannot find a suitable CLI, it
-   offers to install the official one; see
-   [INSTALL.md](INSTALL.md#the-bitwarden-cli).
+1. **The Bitwarden CLI.** Bitwarden's own command-line program does the
+   encryption and talks to Bitwarden's servers; Countersign never does
+   either. If Countersign cannot find a suitable copy, it offers to install
+   the official one; see [INSTALL.md](INSTALL.md#the-bitwarden-cli).
 2. **Sign in.** Choose your server: **US cloud**, **EU cloud** or
    **Self-hosted** (enter its address). Then either:
    - **Sign in with email.** The official CLI asks for your email, master

@@ -12,7 +12,7 @@ use gtk::{gdk, glib};
 use super::gates::{busy_button, confirm_sign_out, server_name, set_button_busy};
 use crate::app::App;
 
-const QUICK_BINDING: &str = r#"o.bind("SUPER + SHIFT + P", "Passwords", "countersign --quick")"#;
+const QUICK_BINDING: &str = r#"o.rebind("SUPER + SHIFT + P", "Passwords", "countersign --quick")"#;
 const AUTOSTART: &str = r#"o.launch_on_start("countersign --background")"#;
 
 pub fn present(app: &Rc<App>) {
@@ -116,7 +116,10 @@ fn build(app: &Rc<App>) -> adw::PreferencesDialog {
 
     let desktop = adw::PreferencesGroup::builder()
         .title("Desktop")
-        .description("Add these lines to ~/.config/hypr/bindings.lua and autostart.lua.")
+        .description(
+            "Add these lines to ~/.config/hypr/bindings.lua and autostart.lua. The key replaces Omarchy's \
+             Google Photos shortcut.",
+        )
         .build();
     let background =
         switch("Keep running when closed", "Quick access opens instantly", settings.close_to_background);

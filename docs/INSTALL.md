@@ -1,8 +1,10 @@
 # Installing Countersign
 
-Countersign runs on Omarchy and other Hyprland desktops. Each release has an
-archive for x86_64 Omarchy, built on Arch Linux. On other systems, or to run
-the latest code, build it from source. Both install with the same script.
+Countersign runs on Omarchy and other Hyprland desktops. On Omarchy, on an
+Intel or AMD (x86_64) computer, [install a release](#install-a-release): it
+comes ready to run. On other systems, or to run the latest code,
+[build it from source](#build-from-source). Both install with the same
+script.
 
 ## Requirements
 
@@ -27,16 +29,26 @@ Building from source also needs:
 
 ## Install a release
 
+Run these in a terminal. They download the latest release into a folder of
+its own, check it, unpack it and install it:
+
 ```bash
+mkdir -p ~/Downloads/countersign && cd ~/Downloads/countersign
 curl -LO https://github.com/BVisagie/countersign/releases/latest/download/countersign-x86_64.tar.gz
 curl -LO https://github.com/BVisagie/countersign/releases/latest/download/SHA256SUMS
-sha256sum -c SHA256SUMS
-tar xf countersign-x86_64.tar.gz
-countersign-x86_64/scripts/install.sh
+sha256sum -c SHA256SUMS && tar xf countersign-x86_64.tar.gz && countersign-x86_64/scripts/install.sh
 ```
 
-`sha256sum -c` should say `countersign-x86_64.tar.gz: OK`. Older releases
-are on the [releases page](https://github.com/BVisagie/countersign/releases).
+`sha256sum -c` should say `countersign-x86_64.tar.gz: OK`. If it says
+`FAILED`, the download is damaged or incomplete, and the last line stops
+there without unpacking or installing it: download both files again. If a library Countersign needs is missing, the
+install script offers to install it with pacman, which asks for your
+password first. On Omarchy that is `vte4`. See
+[What the install script does](#what-the-install-script-does).
+
+Then open Countersign from your app launcher, or run `countersign`, and
+[add it to Hyprland](#add-it-to-hyprland). Older releases are on the
+[releases page](https://github.com/BVisagie/countersign/releases).
 
 ## Build from source
 
@@ -74,10 +86,15 @@ quick access opens instantly:
 
 ```lua
 -- ~/.config/hypr/bindings.lua
-o.bind("SUPER + SHIFT + P", "Passwords", "countersign --quick")
+o.rebind("SUPER + SHIFT + P", "Passwords", "countersign --quick")
 -- ~/.config/hypr/autostart.lua
 o.launch_on_start("countersign --background")
 ```
+
+`o.rebind` replaces what the key did before: on Omarchy, `Super+Shift+P`
+opens Google Photos. To keep that shortcut, choose a free key and use
+`o.bind` instead. Hyprland picks up a binding when you save the file;
+autostart begins at your next login.
 
 The same lines, with copy buttons, are under **Settings → Desktop**.
 
@@ -148,9 +165,9 @@ terminal, and the other way round.
 
 ## Updating
 
-Run the commands in [Install a release](#install-a-release) again, in the
-same folder: the new archive replaces the old one and unpacks over it. From
-source:
+Run the commands in [Install a release](#install-a-release) again. They
+use the same folder, so the new archive replaces the old one and unpacks
+over it. Your settings and sign-in are kept. From source:
 
 ```bash
 cd countersign

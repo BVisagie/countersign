@@ -71,6 +71,25 @@ jobs:
             echo "CHANGELOG.md has no section \"## $version\"" >&2
             exit 1
           fi
+          # Then how to install this release, with its own download links.
+          repo=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY
+          cat >>notes.md <<NOTES
+
+          ## Install
+
+          On Omarchy, on an Intel or AMD (x86_64) computer, in a terminal:
+
+          \`\`\`bash
+          mkdir -p ~/Downloads/countersign && cd ~/Downloads/countersign
+          curl -LO $repo/releases/download/$GITHUB_REF_NAME/countersign-x86_64.tar.gz
+          curl -LO $repo/releases/download/$GITHUB_REF_NAME/SHA256SUMS
+          sha256sum -c SHA256SUMS && tar xf countersign-x86_64.tar.gz && countersign-x86_64/scripts/install.sh
+          \`\`\`
+
+          \`sha256sum -c\` should say \`countersign-x86_64.tar.gz: OK\`. Then open
+          Countersign from your app launcher. [The install guide]($repo/blob/$GITHUB_REF_NAME/docs/INSTALL.md)
+          explains each step, how to add a key for quick access, and how to update.
+          NOTES
           flags=(--draft --verify-tag --title "Countersign ${GITHUB_REF_NAME#v}" --notes-file notes.md)
           if [[ $GITHUB_REF_NAME == *-* ]]; then
             flags+=(--prerelease)
