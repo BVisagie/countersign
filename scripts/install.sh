@@ -95,8 +95,11 @@ install -Dm644 data/icons/io.github.bvisagie.Countersign.svg "$data/icons/hicolo
 install -Dm644 data/icons/io.github.bvisagie.Countersign-symbolic.svg "$data/icons/hicolor/symbolic/apps/io.github.bvisagie.Countersign-symbolic.svg"
 
 cat <<'NEXT'
-Installed. To open quick access with a key and start Countersign with Hyprland, add:
+Installed. Open Countersign from your app launcher, or run: countersign
 
-  ~/.config/hypr/bindings.lua:   o.bind("SUPER + SHIFT + P", "Passwords", "countersign --quick")
+To open quick access with Super+Shift+P and start Countersign when you log in,
+add these lines. The key replaces Omarchy's Google Photos shortcut.
+
+  ~/.config/hypr/bindings.lua:   o.rebind("SUPER + SHIFT + P", "Passwords", "countersign --quick")
   ~/.config/hypr/autostart.lua:  o.launch_on_start("countersign --background")
 NEXT
