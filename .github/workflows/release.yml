@@ -1,35 +1,37 @@
 name: Release
 
-# A tag v<version> builds the release archive and drafts a GitHub release
-# with it; publishing the draft is done by hand. A pull request that changes
-# the packaging builds the archive without releasing it.
+# A tag v<version> builds the release archives, one for x86_64 and one for
+# aarch64, and drafts a GitHub release with them; publishing the draft is done
+# by hand. A pull request that changes the packaging builds the archives
+# without releasing them.
 on:
   push:
     tags: ["v*"]
   pull_request:
     paths:
+      - .github/keys/**
       - .github/workflows/release.yml
       - scripts/install.sh
       - scripts/package.sh
+      - scripts/release-build.sh
+      - scripts/screenshots.sh
 
 permissions:
   contents: read
 
 jobs:
   package:
-    runs-on: ubuntu-latest
-    # Built on Arch, like Omarchy, so it links the libraries Omarchy has.
-    container: archlinux:latest
+    strategy:
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-latest
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
     steps:
-      - name: Install system packages
-        run: pacman -Syu --noconfirm --needed base-devel git gtk4 libadwaita gtk4-layer-shell vte4 rustup
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      # The container runs as root on a workspace the runner owns; without
-      # this, git refuses it, and package.sh needs the commit's time.
-      - name: Trust the workspace
-        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
-      - name: Install Rust
-        run: rustup default stable && rustup component add clippy rustfmt
       - name: Check the tag matches Cargo.toml
         if: github.ref_type == 'tag'
         run: |
@@ -38,14 +40,37 @@ jobs:
             "v$version" | "v$version"-*) ;;
             *) echo "Tag $GITHUB_REF_NAME does not match version $version in Cargo.toml" >&2; exit 1 ;;
           esac
-      - run: cargo fmt --all --check
-      - run: cargo clippy --workspace --all-targets -- -D warnings
-      - run: cargo test --workspace
-      - run: scripts/package.sh
+      # Built on Arch, like Omarchy, so it links the libraries Omarchy has.
+      - name: Use Arch Linux
+        if: matrix.arch == 'x86_64'
+        run: docker pull archlinux:latest && docker tag archlinux:latest countersign-build
+      # Arch Linux ARM publishes no container image, only a root filesystem,
+      # signed by its build system. Its download server has no HTTPS, so the
+      # signature, checked against the key kept in this repository, is what
+      # proves the download.
+      - name: Use Arch Linux ARM
+        if: matrix.arch == 'aarch64'
+        working-directory: ${{ runner.temp }}
+        run: |
+          url=http://os.archlinuxarm.org/os/ArchLinuxARM-aarch64-latest.tar.gz
+          curl -fsSL -o root.tar.gz "$url"
+          curl -fsSL -o root.tar.gz.sig "$url.sig"
+          gpg --dearmor <"$GITHUB_WORKSPACE/.github/keys/archlinuxarm-build-system.asc" >archlinuxarm.gpg
+          gpgv --keyring ./archlinuxarm.gpg root.tar.gz.sig root.tar.gz
+          docker import root.tar.gz countersign-build
+          rm root.tar.gz root.tar.gz.sig archlinuxarm.gpg
+      - name: Build, check and pack
+        run: docker run --rm -v "$GITHUB_WORKSPACE:/src" -w /src countersign-build scripts/release-build.sh
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: countersign-x86_64
-          path: dist/
+          name: countersign-${{ matrix.arch }}
+          path: dist/countersign-${{ matrix.arch }}.tar.gz
+          if-no-files-found: error
+      # What the packed app drew on the demo vault, to look at.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: screenshots-${{ matrix.arch }}
+          path: smoke/
           if-no-files-found: error
 
   release:
@@ -58,8 +83,12 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: countersign-x86_64
+          pattern: countersign-*
+          merge-multiple: true
           path: dist
+      - name: Checksum the archives
+        working-directory: dist
+        run: sha256sum countersign-x86_64.tar.gz countersign-aarch64.tar.gz >SHA256SUMS
       - name: Draft the release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -77,21 +106,24 @@ jobs:
 
           ## Install
 
-          On Omarchy, on an Intel or AMD (x86_64) computer, in a terminal:
+          On Omarchy, on an x86_64 (Intel or AMD) or aarch64 (ARM) computer, in a
+          terminal:
 
           \`\`\`bash
           mkdir -p ~/Downloads/countersign && cd ~/Downloads/countersign
-          curl -LO $repo/releases/download/$GITHUB_REF_NAME/countersign-x86_64.tar.gz
+          arch=\$(uname -m)
+          curl -LO $repo/releases/download/$GITHUB_REF_NAME/countersign-\$arch.tar.gz
           curl -LO $repo/releases/download/$GITHUB_REF_NAME/SHA256SUMS
-          sha256sum -c SHA256SUMS && tar xf countersign-x86_64.tar.gz && countersign-x86_64/scripts/install.sh
+          sha256sum -c --ignore-missing SHA256SUMS && tar xf countersign-\$arch.tar.gz && countersign-\$arch/scripts/install.sh
           \`\`\`
 
-          \`sha256sum -c\` should say \`countersign-x86_64.tar.gz: OK\`. Then open
-          Countersign from your app launcher. [The install guide]($repo/blob/$GITHUB_REF_NAME/docs/INSTALL.md)
+          \`sha256sum -c\` should say \`countersign-x86_64.tar.gz: OK\`, or
+          \`countersign-aarch64.tar.gz: OK\` on ARM. Then open Countersign from your
+          app launcher. [The install guide]($repo/blob/$GITHUB_REF_NAME/docs/INSTALL.md)
           explains each step, how to add a key for quick access, and how to update.
           NOTES
           flags=(--draft --verify-tag --title "Countersign ${GITHUB_REF_NAME#v}" --notes-file notes.md)
           if [[ $GITHUB_REF_NAME == *-* ]]; then
             flags+=(--prerelease)
           fi
-          gh release create "$GITHUB_REF_NAME" "${flags[@]}" dist/countersign-x86_64.tar.gz dist/SHA256SUMS
+          gh release create "$GITHUB_REF_NAME" "${flags[@]}" dist/countersign-x86_64.tar.gz dist/countersign-aarch64.tar.gz dist/SHA256SUMS
