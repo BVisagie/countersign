@@ -51,7 +51,10 @@ server protocol. Those stay in the official CLI.
 ## Release archives
 
 A release archive is built by GitHub Actions from the tagged commit, in an
-Arch Linux container. Its `SHA256SUMS` shows that the download arrived
+Arch Linux container for x86_64 and an Arch Linux ARM container for
+aarch64, each installing packages from Omarchy's stable mirror. Arch Linux
+ARM's root filesystem is checked against its build system's signing key,
+kept in `.github/keys/`. Its `SHA256SUMS` shows that the download arrived
 intact; like the archive, it comes from this repository's release page.
 Building from source avoids trusting the archive.
 

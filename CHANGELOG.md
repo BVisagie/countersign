@@ -5,8 +5,9 @@ the ones that release works with and installs.
 
 ## 0.1.0
 
-The first release, for Omarchy on x86_64. It works with the official
-Bitwarden CLI 2026.10.0 or newer, and installs 2026.10.1 when you let it.
+The first release, for Omarchy on x86_64 and ARM (aarch64). It works with
+the official Bitwarden CLI 2026.10.0 or newer, and installs 2026.10.1 when
+you let it.
 
 - **Quick access**: a launcher-style overlay that copies a password in a
   few keystrokes, recent items first, with the item's one-time code copied
@@ -32,5 +33,7 @@ Known limitations:
 
 - Attachments and file Sends are built but not yet tried on a Premium
   account.
+- The ARM build is built and tested automatically, and starts on the demo
+  vault, but has not yet been tried on an ARM computer.
 - SSH keys cannot be created, and an existing key's key material cannot be
   changed, because the official CLI cannot generate or import keys.

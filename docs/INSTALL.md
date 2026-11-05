@@ -1,10 +1,10 @@
 # Installing Countersign
 
 Countersign runs on Omarchy and other Hyprland desktops. On Omarchy, on an
-Intel or AMD (x86_64) computer, [install a release](#install-a-release): it
-comes ready to run. On other systems, or to run the latest code,
-[build it from source](#build-from-source). Both install with the same
-script.
+Intel or AMD (x86_64) or an ARM (aarch64) computer,
+[install a release](#install-a-release): it comes ready to run. On other
+systems, or to run the latest code, [build it from source](#build-from-source).
+Both install with the same script.
 
 ## Requirements
 
@@ -29,21 +29,24 @@ Building from source also needs:
 
 ## Install a release
 
-Run these in a terminal. They download the latest release into a folder of
-its own, check it, unpack it and install it:
+Run these in a terminal. They download the latest release for your
+computer's architecture, which `uname -m` names, into a folder of its own,
+then check it, unpack it and install it:
 
 ```bash
 mkdir -p ~/Downloads/countersign && cd ~/Downloads/countersign
-curl -LO https://github.com/BVisagie/countersign/releases/latest/download/countersign-x86_64.tar.gz
+arch=$(uname -m)
+curl -LO https://github.com/BVisagie/countersign/releases/latest/download/countersign-$arch.tar.gz
 curl -LO https://github.com/BVisagie/countersign/releases/latest/download/SHA256SUMS
-sha256sum -c SHA256SUMS && tar xf countersign-x86_64.tar.gz && countersign-x86_64/scripts/install.sh
+sha256sum -c --ignore-missing SHA256SUMS && tar xf countersign-$arch.tar.gz && countersign-$arch/scripts/install.sh
 ```
 
-`sha256sum -c` should say `countersign-x86_64.tar.gz: OK`. If it says
-`FAILED`, the download is damaged or incomplete, and the last line stops
-there without unpacking or installing it: download both files again. If a library Countersign needs is missing, the
-install script offers to install it with pacman, which asks for your
-password first. On Omarchy that is `vte4`. See
+`sha256sum -c` should say `countersign-x86_64.tar.gz: OK`, or
+`countersign-aarch64.tar.gz: OK` on ARM. If it says `FAILED`, the download
+is damaged or incomplete, and the last line stops there without unpacking
+or installing it: download both files again. If a library Countersign
+needs is missing, the install script offers to install it with pacman,
+which asks for your password first. On Omarchy that is `vte4`. See
 [What the install script does](#what-the-install-script-does).
 
 Then open Countersign from your app launcher, or run `countersign`, and

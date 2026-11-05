@@ -7,7 +7,7 @@
 A fast, keyboard-first desktop app for Bitwarden on Omarchy and other
 Hyprland desktops, written in Rust and built on the official Bitwarden CLI.
 
-![The main window in Omarchy's Cumulus theme](docs/screenshots/main.png)
+![The main window in the InkyPinky theme](docs/screenshots/main.png)
 
 Countersign is an independent project, not affiliated with or endorsed by
 Bitwarden, Inc. It never implements Bitwarden's encryption and never talks to
@@ -46,7 +46,9 @@ interface and the desktop integration around it.
 | --- | --- |
 | ![The item editor](docs/screenshots/edit.png) | ![The Send page](docs/screenshots/sends.png) |
 
-Screenshots use a fictional demo vault; see `scripts/screenshots.sh`.
+Screenshots use a fictional demo vault; see `scripts/screenshots.sh`. Most
+are in HANCORE's [InkyPinky](https://github.com/HANCORE-linux/omarchy-inkypinky-theme)
+theme for Omarchy.
 
 ## Status
 
@@ -57,24 +59,27 @@ Early: 0.1.0 is the first release. It is built and tested on Omarchy.
 
 ## Quick start
 
-You need Omarchy on an Intel or AMD (x86_64) computer, and a Bitwarden
-account. On another Hyprland desktop, or to run the latest code,
-[build it from source](docs/INSTALL.md#build-from-source) instead.
+You need Omarchy, on an Intel or AMD (x86_64) or an ARM (aarch64) computer,
+and a Bitwarden account. On another Hyprland desktop, or to run the latest
+code, [build it from source](docs/INSTALL.md#build-from-source) instead.
 
 1. **Download and install.** Run these in a terminal:
 
    ```bash
    mkdir -p ~/Downloads/countersign && cd ~/Downloads/countersign
-   curl -LO https://github.com/BVisagie/countersign/releases/latest/download/countersign-x86_64.tar.gz
+   arch=$(uname -m)
+   curl -LO https://github.com/BVisagie/countersign/releases/latest/download/countersign-$arch.tar.gz
    curl -LO https://github.com/BVisagie/countersign/releases/latest/download/SHA256SUMS
-   sha256sum -c SHA256SUMS && tar xf countersign-x86_64.tar.gz && countersign-x86_64/scripts/install.sh
+   sha256sum -c --ignore-missing SHA256SUMS && tar xf countersign-$arch.tar.gz && countersign-$arch/scripts/install.sh
    ```
 
-   `sha256sum -c` checks the download and should say
-   `countersign-x86_64.tar.gz: OK`; if it does not, nothing is unpacked or
-   installed. The install script installs Countersign
-   for your user. Omarchy lacks one library it needs, `vte4`, so the script
-   offers to install it with pacman, which asks for your password first.
+   `uname -m` names your computer's architecture, so the commands download
+   the archive built for it. `sha256sum -c` checks the download and should
+   say `countersign-x86_64.tar.gz: OK` (or `aarch64` on ARM); if it does
+   not, nothing is unpacked or installed. The install script installs
+   Countersign for your user. Omarchy lacks one library it needs, `vte4`, so
+   the script offers to install it with pacman, which asks for your password
+   first.
 
 2. **Open Countersign** from your app launcher, or run `countersign`.
 
