@@ -25,6 +25,10 @@ use crate::app::App;
 
 const APP_ID: &str = "io.github.bvisagie.Countersign";
 
+/// This binary's version: plain for a release, and with `+dev` for any other
+/// build. `build.rs` works it out.
+pub const VERSION: &str = env!("COUNTERSIGN_VERSION");
+
 fn main() -> glib::ExitCode {
     register_resources();
     let mut flags = gio::ApplicationFlags::HANDLES_COMMAND_LINE;
@@ -68,7 +72,7 @@ fn main() -> glib::ExitCode {
 
     gtk_app.connect_handle_local_options(|_, options| {
         if options.contains("version") {
-            println!("countersign {}", env!("CARGO_PKG_VERSION"));
+            println!("countersign {VERSION}");
             return std::ops::ControlFlow::Break(glib::ExitCode::SUCCESS);
         }
         std::ops::ControlFlow::Continue(())

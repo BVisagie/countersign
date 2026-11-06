@@ -27,6 +27,14 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 ```
 
+## Versions
+
+Only the release workflow makes an official build: it sets
+`COUNTERSIGN_RELEASE` to the tag, and those binaries report `0.1.0`. Any other
+build reports a dev version such as `0.1.0+dev.2.30530ac`, two commits after
+`v0.1.0` at commit `30530ac`. Uncommitted changes do not show in it.
+`Cargo.toml` keeps the last release's number until the next release bumps it.
+
 ## Keep your real vault out of it
 
 Your default Countersign folders belong to your real vault. Run a

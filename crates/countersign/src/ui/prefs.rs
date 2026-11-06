@@ -200,6 +200,7 @@ fn build(app: &Rc<App>) -> adw::PreferencesDialog {
     page.add(&desktop);
     page.add(&account);
     page.add(&cli);
+    page.add(&about_group());
     dialog.add(&page);
 
     // Gather every control into one settings value and save it, at most
@@ -266,6 +267,20 @@ fn build(app: &Rc<App>) -> adw::PreferencesDialog {
         });
     }
     dialog
+}
+
+fn about_group() -> adw::PreferencesGroup {
+    let about = adw::PreferencesGroup::builder().title("About").build();
+    let version =
+        adw::ActionRow::builder().title("Version").subtitle(crate::VERSION).subtitle_selectable(true).build();
+    let more = gtk::Button::builder()
+        .label("About Countersign")
+        .valign(gtk::Align::Center)
+        .action_name("app.about")
+        .build();
+    version.add_suffix(&more);
+    about.add(&version);
+    about
 }
 
 /// Offers the release this Countersign pins in place of the older copy it

@@ -58,6 +58,14 @@ scripts/package.sh
 # desktop for dbus-run-session to disturb.
 unpacked=$(mktemp -d)
 tar -C "$unpacked" -xzf "dist/countersign-$arch.tar.gz"
+# A tag's binaries must report that release, not a dev version.
+if [[ -n ${COUNTERSIGN_RELEASE:-} ]]; then
+  reported=$("$unpacked/countersign-$arch/bin/countersign" --version)
+  if [[ $reported != "countersign ${COUNTERSIGN_RELEASE#v}" ]]; then
+    echo "The packed app reports \"$reported\" for tag $COUNTERSIGN_RELEASE" >&2
+    exit 1
+  fi
+fi
 rm -rf smoke
 COUNTERSIGN_BIN="$unpacked/countersign-$arch/bin/countersign" dbus-run-session -- scripts/screenshots.sh smoke
 rm -rf "$unpacked"

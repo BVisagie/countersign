@@ -86,7 +86,7 @@ pub fn present_about(parent: Option<&gtk::Widget>) {
         .application_name("Countersign")
         // Inside the app the mascot is always the theme-colored symbolic icon.
         .application_icon(super::SENTRY_ICON)
-        .version(env!("CARGO_PKG_VERSION"))
+        .version(crate::VERSION)
         .developer_name("BVisagie")
         .website(env!("CARGO_PKG_REPOSITORY"))
         .issue_url(concat!(env!("CARGO_PKG_REPOSITORY"), "/issues"))
