@@ -10,9 +10,9 @@ official Bitwarden CLI 2026.10.1 or newer, and installs 2026.10.1 when you let
 it.
 
 To update, quit Countersign, run `pkill -x countersignd`, then install. The
-app and its background service changed together: if the old service is still
-running, the app says they are different versions until it exits, about a
-minute later.
+app and its background service changed together, so the new app cannot use
+the old service. If it says they are different versions, quit it, run
+`pkill -x countersignd`, and open it again.
 
 - **Archive**: archived items have their own row above Trash, and stay out
   of All items, search and quick access, as in the web vault. The item's
