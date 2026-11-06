@@ -12,9 +12,11 @@ fn main() {
     );
 
     println!("cargo:rerun-if-env-changed=COUNTERSIGN_RELEASE");
-    // Git writes to this log on every commit and checkout.
-    if let Some(log) = git(&["rev-parse", "--git-path", "logs/HEAD"]) {
-        println!("cargo:rerun-if-changed={log}");
+    // Git writes to these on every commit, checkout and new tag.
+    for path in ["logs/HEAD", "refs/tags"] {
+        if let Some(path) = git(&["rev-parse", "--git-path", path]) {
+            println!("cargo:rerun-if-changed={path}");
+        }
     }
     println!("cargo:rustc-env=COUNTERSIGN_VERSION={}", version());
 }
