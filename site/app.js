@@ -579,7 +579,12 @@
   }
   el.detail.addEventListener('click', e => {
     const b = e.target.closest('button'); if (!b) return;
-    if ('reveal' in b.dataset) { gate(S.detail, () => { S.reveal = !S.reveal; renderDetail(); }); return; }
+    if ('reveal' in b.dataset) {
+      /* Only showing a secret needs the gate. Hiding one never waits. */
+      const toggle = () => { S.reveal = !S.reveal; renderDetail(); };
+      if (S.reveal) toggle(); else gate(S.detail, toggle);
+      return;
+    }
     if (b.dataset.copy) copy(S.detail, b.dataset.copy);
   });
 
