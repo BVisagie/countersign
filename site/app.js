@@ -39,7 +39,7 @@
         '--fg': t.fg, '--dim': readable(t.fl || t.fg, surfaces, t.fg), '--muted': readable(t.mu, surfaces, t.fg),
         '--accent': t.a, '--accent-text': readable(t.a, surfaces, away), '--on-accent': onAccent,
         '--sel': t.sel, '--sel-fg': readable(t.fg, [t.sel], away),
-        '--ok': readable(t.gr, surfaces, away, 3), '--warn': readable(t.y, surfaces, away, 3),
+        '--ok': readable(t.gr, surfaces, away, 3), '--warn': readable(t.y, surfaces, away),
         '--tone0': readable(t.b, [t.bg], away, 3), '--tone1': readable(t.c, [t.bg], away, 3), '--tone2': readable(t.gr, [t.bg], away, 3),
         '--tone3': readable(t.ma, [t.bg], away, 3), '--tone4': readable(t.o || t.y, [t.bg], away, 3), '--tone5': readable(t.r, [t.bg], away, 3),
         'color-scheme': dark ? 'dark' : 'light',
@@ -386,14 +386,20 @@
     }
     return score;
   }
+  /* Like nucleo's Pattern: every word of the query must match the field. */
+  function match(text, words) {
+    let sum = 0;
+    for (const w of words) { const s = fuzzy(text, w); if (s === null) return null; sum += s; }
+    return sum;
+  }
   function rank(query) {
-    const q = query.trim().toLowerCase();
+    const q = query.trim().toLowerCase(), words = q.split(/\s+/);
     if (!q) {
       const r = id => { const i = recent.indexOf(id); return i < 0 ? 1e9 : i; };
       return [...ITEMS].sort((a, b) => r(a.id) - r(b.id));
     }
     return ITEMS.map(it => {
-      const parts = [fuzzy(it.name, q) ?? -1, it.host ? (fuzzy(it.host, q) ?? -1) : -1, it.sub ? (fuzzy(it.sub, q) ?? -1) : -1];
+      const parts = [match(it.name, words) ?? -1, it.host ? (match(it.host, words) ?? -1) : -1, it.sub ? (match(it.sub, words) ?? -1) : -1];
       const sc = [parts[0] >= 0 ? parts[0] * 3 : -1, parts[1] >= 0 ? parts[1] * 2 : -1, parts[2]];
       let best = Math.max(...sc);
       if (best < 0) return null;
@@ -421,7 +427,7 @@
     pass: $('#qa-pass'), skip: $('#qa-skip'),
   };
   const S = {
-    view: 'list', shown: [], sel: 0, clip: null, locked: false, pending: null, detail: null, reveal: false, barTimer: 0, touched: false,
+    view: 'list', shown: [], sel: 0, clip: null, locked: false, pending: null, grants: new Map(), detail: null, reveal: false, barTimer: 0, touched: false,
     idle: ['Nothing copied', 'Press / to open quick access'],
   };
   const icon = (id, solid) => `<svg class="i${solid ? ' solid' : ''}" aria-hidden="true"><use href="#${id}"/></svg>`;
@@ -478,16 +484,34 @@
     password: 'Password', username: 'Username', code: 'Verification code', number: 'Card number',
     cvv: 'Security code', note: 'Note', key: 'Public key', cardholder: 'Cardholder name',
   };
+  /* The fields each kind of item has, and what the shortcuts mean on a card. */
+  const HAS = { login: ['password', 'username', 'code'], card: ['number', 'cardholder', 'cvv'], note: ['note'], ssh: ['key'], identity: [] };
+  const ON_CARD = { password: 'number', username: 'cardholder', code: 'cvv' };
+  const current = () => (S.view === 'detail' ? S.detail : S.shown[S.sel]);
+
+  /* As in the daemon: a protected item asks first, then stays open for five minutes. */
+  function gate(it, then) {
+    if (!it.reprompt || Date.now() - (S.grants.get(it.id) ?? -Infinity) < 300000) return then();
+    S.pending = { it, then, from: S.view };
+    openGate(true);
+  }
+  function leaveGate(view) {
+    setView(view);
+    if (view === 'list') renderList();
+    el.input.focus({ preventScroll: true });
+  }
   function copy(it, field) {
     if (!it) return;
-    if (it.reprompt && (field === 'password' || field === 'code') ) { S.pending = { it, field }; return openGate(true); }
-    if (field === 'code' && !it.totp) return bar(`${it.name} has no verification code.`);
-    S.clip = { title: `${FIELDS[field]} copied`, item: it.name, total: 30, at: Date.now(), follow: field === 'password' && it.totp ? it : null };
-    recent = [it.id, ...recent.filter(r => r !== it.id)].slice(0, 6);
-    sentry.hop();
-    setView('closed');
-    tick();
-    $('#qa-reopen').focus({ preventScroll: true });
+    if (it.kind === 'card') field = ON_CARD[field] || field;
+    gate(it, () => {
+      if (!HAS[it.kind].includes(field) || (field === 'code' && !it.totp)) return bar(`This item has no ${FIELDS[field].toLowerCase()}.`);
+      S.clip = { title: `${FIELDS[field]} copied`, item: it.name, total: 30, at: Date.now(), follow: field === 'password' && it.totp ? it : null };
+      recent = [it.id, ...recent.filter(r => r !== it.id)].slice(0, 6);
+      sentry.hop();
+      setView('closed');
+      tick();
+      $('#qa-reopen').focus({ preventScroll: true });
+    });
   }
   function primary(it, alt) {
     if (!it) return;
@@ -517,7 +541,7 @@
     if (S.locked) return;
     S.locked = true;
     if (S.clip) { S.clip = null; S.idle = ['Cleared on lock', 'Nothing left to paste']; setClipTile(...S.idle, 0); }
-    S.pending = null;
+    S.pending = null; S.grants.clear();
     $('#vault-state').textContent = 'Locked'; $('#vault-dot').classList.add('locked'); $('#lock-btn').textContent = 'Unlock';
     sentry.sink(true); openGate(false);
   }
@@ -555,22 +579,22 @@
   }
   el.detail.addEventListener('click', e => {
     const b = e.target.closest('button'); if (!b) return;
-    if ('reveal' in b.dataset) { S.reveal = !S.reveal; renderDetail(); return; }
+    if ('reveal' in b.dataset) { gate(S.detail, () => { S.reveal = !S.reveal; renderDetail(); }); return; }
     if (b.dataset.copy) copy(S.detail, b.dataset.copy);
   });
 
   function act(name) {
-    const it = S.view === 'detail' ? S.detail : S.shown[S.sel];
+    const it = current();
     if (name === 'copy') primary(it, false);
     else if (name === 'alt') primary(it, true);
-    else if (name === 'code') it && it.kind === 'card' ? copy(it, 'cvv') : copy(it, 'code');
+    else if (name === 'code') copy(it, 'code');
     else if (name === 'open') bar(it && it.host ? `Countersign would open ${it.host} in your browser and close.` : 'This item has no website.');
     else if (name === 'details') openDetail(it);
     else if (name === 'esc') esc();
   }
   function esc() {
     if (S.view === 'detail') { setView('list'); renderList(); el.input.focus({ preventScroll: true }); }
-    else if (S.view === 'reprompt') { S.pending = null; setView('list'); renderList(); el.input.focus({ preventScroll: true }); }
+    else if (S.view === 'reprompt') { const { from } = S.pending; S.pending = null; leaveGate(from); }
     else if (S.view === 'list') { if (el.input.value) { el.input.value = ''; S.sel = 0; renderList(); } else closeQuick(); }
   }
 
@@ -582,7 +606,7 @@
   }
   function tick() {
     const now = Date.now();
-    const cur = S.view === 'detail' ? S.detail : S.shown[S.sel];
+    const cur = current();
     const it = cur && cur.totp ? cur : ITEMS.find(i => i.id === 1);
     const win = Math.floor(now / 30000), left = Math.ceil(30 - (now / 1000) % 30), frac = ((30 - (now / 1000) % 30) / 30);
     const val = S.locked ? '●●● ●●●' : totp(it.id, win), code = $('#code-val');
@@ -632,12 +656,11 @@
     S.touched = true;
     const k = e.key, ctrl = e.ctrlKey || e.metaKey;
     const handled = () => e.preventDefault();
-    if (k === 'ArrowDown') { handled(); select(S.sel + 1); }
-    else if (k === 'ArrowUp') { handled(); select(S.sel - 1); }
-    else if (k === 'Enter') { handled(); S.view === 'detail' ? act('copy') : primary(S.shown[S.sel], e.shiftKey); }
+    if (k === 'ArrowDown' || k === 'ArrowUp') { handled(); if (S.view === 'list') select(S.sel + (k === 'ArrowDown' ? 1 : -1)); }
+    else if (k === 'Enter') { handled(); primary(current(), e.shiftKey); }
     else if (k === 'Escape') { handled(); esc(); }
-    else if (ctrl && k.toLowerCase() === 'c' && !el.input.value.slice(el.input.selectionStart, el.input.selectionEnd)) { handled(); const it = S.shown[S.sel]; it && it.kind === 'card' ? copy(it, 'number') : copy(it, 'password'); }
-    else if (ctrl && k.toLowerCase() === 'b') { handled(); const it = S.shown[S.sel]; it && it.kind === 'login' ? copy(it, 'username') : act('alt'); }
+    else if (ctrl && k.toLowerCase() === 'c' && !el.input.value.slice(el.input.selectionStart, el.input.selectionEnd)) { handled(); copy(current(), 'password'); }
+    else if (ctrl && k.toLowerCase() === 'b') { handled(); copy(current(), 'username'); }
     else if (ctrl && k.toLowerCase() === 't') { handled(); act('code'); }
     else if (ctrl && k.toLowerCase() === 'u') { handled(); act('open'); }
     else if (ctrl && k.toLowerCase() === 'o') { handled(); act('details'); }
@@ -654,8 +677,10 @@
   $('#qa-gate').addEventListener('submit', e => {
     e.preventDefault();
     if (!el.pass.value) { el.pass.placeholder = 'Type anything. This vault is fictional.'; return; }
-    if (S.view === 'reprompt') { const p = S.pending; S.pending = null; const it = { ...p.it, reprompt: false }; setView('list'); copy(it, p.field); }
-    else unlock();
+    if (S.view === 'reprompt') {
+      const p = S.pending; S.pending = null; S.grants.set(p.it.id, Date.now());
+      leaveGate(p.from); p.then();
+    } else unlock();
   });
   el.pass.addEventListener('keydown', e => { if (e.key === 'Escape') { e.preventDefault(); esc(); } });
   $('#lock-btn').addEventListener('click', () => { S.touched = true; S.locked ? el.pass.focus({ preventScroll: true }) : lock(); });

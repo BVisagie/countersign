@@ -45,7 +45,7 @@
     --fg: #1b2633; --dim: #33404e; --muted: #535c64;
     --accent: #7c4f24; --accent-text: #6e431b; --on-accent: #fbf3e3;
     --sel: #e3d3b4; --sel-fg: #1b2633;
-    --ok: #4d6b33; --warn: #8f5b12;
+    --ok: #4d6b33; --warn: #7f4f0c;
     --tone0: #2f6390; --tone1: #24776c; --tone2: #4d6b33; --tone3: #7c4a8c; --tone4: #8f5b12; --tone5: #a63d2c;
     color-scheme: light;
   }
@@ -207,7 +207,7 @@ h1 {
 .rt { flex: 1; min-width: 0; display: grid; gap: 0; }
 .rt b { font-weight: 700; font-size: var(--t-16); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .rt small { font-size: var(--t-13); color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.row[aria-selected="true"] small { color: var(--sel-fg); opacity: .78; }
+.row[aria-selected="true"] small { color: var(--sel-fg); }
 .badges { display: flex; align-items: center; gap: 8px; color: var(--muted); flex: none; }
 .badges .i { width: 16px; height: 16px; display: block; }
 .badges .fav { color: var(--tone3); }
