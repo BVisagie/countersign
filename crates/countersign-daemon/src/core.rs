@@ -1122,11 +1122,9 @@ mod tests {
     /// open session.
     #[tokio::test]
     async fn no_idle_cli_outlives_an_open() {
-        use std::os::unix::fs::PermissionsExt;
         let (daemon, root) = daemon();
         let bw = root.path().join("bw");
-        std::fs::write(&bw, "#!/bin/sh\nexec sleep 30\n").unwrap();
-        std::fs::set_permissions(&bw, std::fs::Permissions::from_mode(0o700)).unwrap();
+        write_script(&bw, "#!/bin/sh\nexec sleep 30\n");
         let cli = Cli::new(&bw, root.path().join("profile"));
         let spawn = || Serve::spawn(&cli, None);
 
@@ -1193,6 +1191,23 @@ mod tests {
         assert_eq!(folder(&real), Some(Folder { id: "f1".into(), name: "Archive".into() }));
     }
 
+    /// Writes an executable script standing in for the CLI, from a child
+    /// process. A file this process had open for writing could be inherited
+    /// by a CLI another test is forking, and running it would then fail with
+    /// "text file busy".
+    fn write_script(path: &std::path::Path, script: &str) {
+        use std::io::Write;
+        use std::process::{Command, Stdio};
+        let mut writer = Command::new("sh")
+            .args(["-c", "cat >\"$0\" && chmod 700 \"$0\""])
+            .arg(path)
+            .stdin(Stdio::piped())
+            .spawn()
+            .unwrap();
+        writer.stdin.take().unwrap().write_all(script.as_bytes()).unwrap();
+        assert!(writer.wait().unwrap().success());
+    }
+
     /// Stands in for the CLI: logs each call to the profile folder and
     /// remembers the server it is pointed at.
     const FAKE_CLI: &str = r#"#!/bin/sh
@@ -1212,11 +1227,9 @@ esac
     /// read once per executable, and again when the user asks to check.
     #[tokio::test]
     async fn server_switch_runs_only_what_it_needs() {
-        use std::os::unix::fs::PermissionsExt;
         let (daemon, root) = daemon();
         let bw = root.path().join("bw");
-        std::fs::write(&bw, FAKE_CLI).unwrap();
-        std::fs::set_permissions(&bw, std::fs::Permissions::from_mode(0o700)).unwrap();
+        write_script(&bw, FAKE_CLI);
         daemon.set_settings(Settings { cli_path: Some(bw), ..Settings::default() });
         let calls = || std::fs::read_to_string(root.path().join("profile/calls")).unwrap();
 
@@ -1238,7 +1251,6 @@ esac
     #[tokio::test]
     async fn offers_the_pin_only_over_an_older_managed_copy() {
         use countersign_bw::MINIMUM_VERSION;
-        use std::os::unix::fs::PermissionsExt;
         let (daemon, root) = daemon();
         let older = MINIMUM_VERSION.to_string();
         let script = format!(
@@ -1246,8 +1258,7 @@ esac
         );
         let bw = daemon.paths.managed_cli(&older);
         std::fs::create_dir_all(bw.parent().unwrap()).unwrap();
-        std::fs::write(&bw, &script).unwrap();
-        std::fs::set_permissions(&bw, std::fs::Permissions::from_mode(0o700)).unwrap();
+        write_script(&bw, &script);
 
         daemon.refresh().await;
         let expected = (MINIMUM_VERSION < PINNED_VERSION && PinnedArchive::for_this_machine().is_some())
@@ -1258,8 +1269,7 @@ esac
         );
 
         let own = root.path().join("bw");
-        std::fs::write(&own, &script).unwrap();
-        std::fs::set_permissions(&own, std::fs::Permissions::from_mode(0o700)).unwrap();
+        write_script(&own, &script);
         daemon.set_settings(Settings { cli_path: Some(own), ..Settings::default() });
         daemon.refresh().await;
         assert_eq!(daemon.status().cli, CliState::Ready { version: older, managed: false, update: None });
@@ -1282,13 +1292,11 @@ esac
     /// one, never the copy being replaced.
     #[tokio::test]
     async fn preparing_waits_for_a_cli_switch() {
-        use std::os::unix::fs::PermissionsExt;
         let (daemon, root) = daemon();
         let fake = |name: &str| {
             let bw = root.path().join(name);
             let log = root.path().join("started");
-            std::fs::write(&bw, format!("#!/bin/sh\necho {name} >> {}\n", log.display())).unwrap();
-            std::fs::set_permissions(&bw, std::fs::Permissions::from_mode(0o700)).unwrap();
+            write_script(&bw, &format!("#!/bin/sh\necho {name} >> {}\n", log.display()));
             Cli::new(&bw, root.path().join("profile"))
         };
         *daemon.cli.lock().unwrap() = Some(fake("old"));
