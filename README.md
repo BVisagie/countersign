@@ -6,6 +6,8 @@
 
 A fast, keyboard-first desktop app for Bitwarden on Omarchy and other
 Hyprland desktops, written in Rust and built on the official Bitwarden CLI.
+[Try quick access in your browser](https://bvisagie.github.io/countersign/) on
+a fictional vault.
 
 ![The main window in the InkyPinky theme](docs/screenshots/main.png)
 
