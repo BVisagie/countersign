@@ -47,6 +47,22 @@ The build links system libraries, `vte4` among them;
   and how it was tested, for any reader. Leave out review rounds, reviewer
   verdicts, model names and tool errors.
 
+## The web page
+
+`site/` is the page at <https://bvisagie.github.io/countersign/>: plain HTML,
+CSS and JavaScript. `scripts/build-site.sh` adds the version, screenshots and
+icon, and `.github/workflows/pages.yml` publishes it from `main`.
+
+- It makes no third-party requests. Its Content Security Policy allows only
+  its own files, so set colors from script with `style.setProperty`, never a
+  `style` attribute. `site/fonts/README.md` says how the fonts were made.
+- It never hosts install commands, scripts or binaries. Install links go to
+  the README on GitHub.
+- Its demo copies the app: `site/app.js` holds the vault from `demo.rs`, the
+  ranking from `search.rs`, the contrast rule from `theme.rs` and the default
+  settings, and `site/themes.js` holds Omarchy's palettes. Its claims come from
+  the README and `docs/`. Change them together.
+
 ## Development data
 
 Your default Countersign folders belong to your real vault. Run development
