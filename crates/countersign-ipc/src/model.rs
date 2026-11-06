@@ -71,6 +71,7 @@ pub struct ItemSummary {
     pub attachments: u32,
     pub reprompt: bool,
     pub deleted: bool,
+    pub archived: bool,
     pub revision: Option<String>,
 }
 
@@ -136,6 +137,7 @@ pub fn summarize(item: &Value) -> Option<ItemSummary> {
         attachments: item["attachments"].as_array().map_or(0, |a| a.len() as u32),
         reprompt: item["reprompt"].as_i64() == Some(1),
         deleted: !item["deletedDate"].is_null(),
+        archived: !item["archivedDate"].is_null(),
         revision: text(&item["revisionDate"]),
     })
 }
@@ -198,6 +200,9 @@ pub struct Organization {
 pub struct VaultSnapshot {
     pub items: Vec<ItemSummary>,
     pub trash: Vec<ItemSummary>,
+    /// Kept out of `items`: Bitwarden leaves archived items out of the vault
+    /// and its searches. One both archived and in the trash is in `trash`.
+    pub archived: Vec<ItemSummary>,
     pub folders: Vec<Folder>,
     pub collections: Vec<Collection>,
     pub organizations: Vec<Organization>,

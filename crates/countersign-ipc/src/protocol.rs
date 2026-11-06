@@ -10,7 +10,7 @@ use crate::model::{
 use crate::secret::Secret;
 
 /// Bumped whenever a message changes incompatibly.
-pub const PROTOCOL_VERSION: u32 = 2;
+pub const PROTOCOL_VERSION: u32 = 3;
 
 /// The largest line either side accepts.
 pub const MAX_FRAME: usize = 64 << 20;
@@ -113,7 +113,13 @@ pub enum Request {
         id: String,
         permanent: bool,
     },
+    /// Takes an item out of the trash, or else out of the archive. An item in
+    /// both comes out of the trash and stays archived.
     RestoreItem {
+        id: String,
+    },
+    /// Bitwarden requires Premium for this.
+    ArchiveItem {
         id: String,
     },
     CreateFolder {

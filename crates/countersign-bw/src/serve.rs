@@ -54,6 +54,9 @@ pub struct ListOptions {
     pub organization_id: Option<String>,
     pub url: Option<String>,
     pub trash: bool,
+    /// Archived items instead of the others. Without Premium the CLI ignores
+    /// this and lists the others, so check each item's `archivedDate`.
+    pub archived: bool,
 }
 
 /// Options for the official password and passphrase generator.
@@ -270,6 +273,9 @@ impl ServeClient {
         if options.trash {
             query.flag("trash");
         }
+        if options.archived {
+            query.flag("archived");
+        }
         self.list(&format!("/list/object/items{}", query.finish())).await
     }
 
@@ -354,6 +360,12 @@ impl ServeClient {
 
     pub async fn restore_item(&self, id: &str) -> Result<()> {
         let path = format!("/restore/item/{}", object_id(id)?);
+        self.call(Method::POST, &path, None, LONG_TIMEOUT).await.map(drop)
+    }
+
+    /// Bitwarden requires Premium for this. [`Self::restore_item`] undoes it.
+    pub async fn archive_item(&self, id: &str) -> Result<()> {
+        let path = format!("/archive/item/{}", object_id(id)?);
         self.call(Method::POST, &path, None, LONG_TIMEOUT).await.map(drop)
     }
 

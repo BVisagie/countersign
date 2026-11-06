@@ -56,7 +56,7 @@ old name, a new one is missing. Folders catch up within seconds; items stay
 behind until a later change or a sync
 ([bitwarden/clients#24432](https://github.com/bitwarden/clients/issues/24432)).
 So the daemon keeps what each change left, from the change's reply or, for
-the trash and attachments, from what it knew already, and lays it over every
+the trash, the archive and attachments, from what it knew already, and lays it over every
 list until the list shows it. Changes from other devices arrive only
 through a sync, so a sync retires what came before it. Changes run one at a
 time, and one still running when the vault locks leaves nothing behind.

@@ -27,6 +27,8 @@ impl Detail {
         add("favorite", |me| me.toggle_favorite());
         add("attach", |me| me.add_attachment());
         add("move", |me| me.move_to_organization());
+        add("archive", |me| me.archive());
+        add("unarchive", |me| me.unarchive());
         add("delete", |me| me.trash());
         add("restore", |me| me.restore());
         add("purge", |me| me.purge());
@@ -44,6 +46,7 @@ impl Detail {
     /// Enables what applies to `item`, or nothing without one.
     pub(super) fn update_actions(&self, item: Option<&Value>) {
         let deleted = item.is_some_and(|i| !i["deletedDate"].is_null());
+        let archived = item.is_some_and(|i| !i["archivedDate"].is_null());
         let live = item.is_some() && !deleted;
         let personal = item.is_some_and(|i| i["organizationId"].is_null());
         let has_orgs = !self.vault.borrow().organizations.is_empty();
@@ -55,6 +58,8 @@ impl Detail {
         enable("favorite", live);
         enable("attach", live);
         enable("move", live && personal && has_orgs);
+        enable("archive", live && !archived);
+        enable("unarchive", live && archived);
         enable("delete", live);
         enable("restore", deleted);
         enable("purge", deleted);
@@ -76,6 +81,11 @@ impl Detail {
             last.append(Some("Restore"), Some("detail.restore"));
             last.append(Some("Delete forever…"), Some("detail.purge"));
         } else {
+            if archived {
+                last.append(Some("Unarchive"), Some("detail.unarchive"));
+            } else {
+                last.append(Some("Archive"), Some("detail.archive"));
+            }
             last.append(Some("Move to trash"), Some("detail.delete"));
         }
         menu.append_section(None, &last);
@@ -214,25 +224,45 @@ impl Detail {
         let me = self.clone();
         glib::spawn_future_local(async move {
             match me.app.request(Request::DeleteItem { id: id.clone(), permanent: false }).await {
-                Ok(_) => {
-                    let app = me.app.clone();
-                    super::window::toast_with_action("Moved to the trash", "Undo", move || {
-                        let (app, id) = (app.clone(), id.clone());
-                        glib::spawn_future_local(async move {
-                            match app.request(Request::RestoreItem { id: id.clone() }).await {
-                                Ok(_) => {
-                                    if let Some(window) = super::window::current() {
-                                        window.select_when_listed(&id);
-                                    }
-                                    super::window::toast("Restored");
-                                }
-                                Err(e) => super::window::toast(&e.message),
-                            }
-                        });
-                    });
-                }
+                Ok(_) => me.offer_undo("Moved to the trash", id),
                 Err(e) => (me.notify)(&e.message),
             }
+        });
+    }
+
+    fn archive(self: &Rc<Self>) {
+        let Some(id) = self.current_id() else { return };
+        let me = self.clone();
+        glib::spawn_future_local(async move {
+            match me.app.request(Request::ArchiveItem { id: id.clone() }).await {
+                Ok(_) => me.offer_undo("Archived", id),
+                Err(e) => (me.notify)(&e.message),
+            }
+        });
+    }
+
+    fn unarchive(self: &Rc<Self>) {
+        if let Some(id) = self.current_id() {
+            self.request(Request::RestoreItem { id }, "Unarchived");
+        }
+    }
+
+    /// Says what happened to an item, with Undo to restore it.
+    fn offer_undo(&self, message: &str, id: String) {
+        let app = self.app.clone();
+        super::window::toast_with_action(message, "Undo", move || {
+            let (app, id) = (app.clone(), id.clone());
+            glib::spawn_future_local(async move {
+                match app.request(Request::RestoreItem { id: id.clone() }).await {
+                    Ok(_) => {
+                        if let Some(window) = super::window::current() {
+                            window.select_when_listed(&id);
+                        }
+                        super::window::toast("Restored");
+                    }
+                    Err(e) => super::window::toast(&e.message),
+                }
+            });
         });
     }
 

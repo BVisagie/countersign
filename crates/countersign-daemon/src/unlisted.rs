@@ -130,11 +130,17 @@ impl Unlisted {
                 item.folder_id = None;
             }
         };
-        snapshot.items.iter_mut().chain(snapshot.trash.iter_mut()).for_each(dangling);
+        snapshot
+            .items
+            .iter_mut()
+            .chain(snapshot.trash.iter_mut())
+            .chain(snapshot.archived.iter_mut())
+            .for_each(dangling);
         self.items.values_mut().filter_map(|(item, _)| item.as_mut()).for_each(dangling);
 
         self.items.retain(|id, (known, _)| {
-            let listed = snapshot.items.iter().chain(&snapshot.trash).find(|i| &i.id == id);
+            let listed =
+                snapshot.items.iter().chain(&snapshot.trash).chain(&snapshot.archived).find(|i| &i.id == id);
             let caught_up = match (known, listed) {
                 (None, listed) => listed.is_none(),
                 (Some(known), Some(listed)) => same(known, listed),
@@ -145,8 +151,10 @@ impl Unlisted {
         for (id, (known, _)) in &self.items {
             snapshot.items.retain(|i| &i.id != id);
             snapshot.trash.retain(|i| &i.id != id);
+            snapshot.archived.retain(|i| &i.id != id);
             match known {
                 Some(item) if item.deleted => snapshot.trash.push(item.clone()),
+                Some(item) if item.archived => snapshot.archived.push(item.clone()),
                 Some(item) => snapshot.items.push(item.clone()),
                 None => {}
             }
@@ -195,6 +203,37 @@ mod tests {
     const T1: &str = "2026-11-04T18:34:39.757Z";
     const T2: &str = "2026-11-04T18:34:41.865Z";
     const T3: &str = "2026-11-04T18:40:00.000Z";
+
+    #[test]
+    fn archiving_shows_until_the_list_catches_up() {
+        let live = item("1", "note", T1, false);
+        let mut unlisted = Unlisted::default();
+        unlisted.derive("1", Some(&live), |i| i.archived = true);
+
+        let mut behind = listing(vec![live.clone()]);
+        unlisted.apply(&mut behind);
+        assert!(behind.items.is_empty());
+        assert_eq!(names(&behind.archived), ["note"]);
+
+        let mut archived = live.clone();
+        archived.archived = true;
+        let mut caught_up = VaultSnapshot { archived: vec![archived], ..Default::default() };
+        unlisted.apply(&mut caught_up);
+        assert_eq!(names(&caught_up.archived), ["note"]);
+        assert!(unlisted.items.is_empty());
+    }
+
+    #[test]
+    fn a_trashed_archived_item_shows_in_the_trash() {
+        let mut item = item("1", "note", T1, true);
+        item.archived = true;
+        let mut unlisted = Unlisted::default();
+        unlisted.item("1".into(), Some(item));
+        let mut vault = VaultSnapshot::default();
+        unlisted.apply(&mut vault);
+        assert_eq!(names(&vault.trash), ["note"]);
+        assert!(vault.archived.is_empty());
+    }
 
     #[test]
     fn an_edit_shows_until_the_list_catches_up() {

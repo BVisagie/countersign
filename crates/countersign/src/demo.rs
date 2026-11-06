@@ -135,6 +135,14 @@ fn demo_items() -> Vec<Value> {
         login(18, "Proton VPN", "alex@fictional.dev", "https://account.protonvpn.com", Some(102), json!({})),
         login(19, "Discord", "alex#0420", "https://discord.com/login", Some(102), json!({})),
         login(20, "Amazon", "alex@fictional.dev", "https://www.amazon.com", Some(103), json!({})),
+        login(
+            21,
+            "Old forum",
+            "alexm",
+            "https://forum.fictional.example",
+            None,
+            json!({"archivedDate": "2026-05-12T09:00:00.000Z"}),
+        ),
     ];
     let base = |n: u32, kind: i64, name: &str, folder: Option<u32>| {
         json!({
@@ -265,12 +273,14 @@ impl Demo {
                 if state.vault != VaultState::Unlocked {
                     return Err(IpcError::new(ErrorCode::Locked, "The vault is locked."));
                 }
-                let mut items: Vec<_> = state.items.iter().filter_map(summarize).collect();
+                let (archived, mut items): (Vec<_>, Vec<_>) =
+                    state.items.iter().filter_map(summarize).partition(|i| i.archived);
                 items.sort_by_key(|i| i.name.to_lowercase());
                 Ok(Response::Vault {
                     vault: VaultSnapshot {
                         items,
                         trash: Vec::new(),
+                        archived,
                         folders: state.folders.clone(),
                         collections: Vec::new(),
                         organizations: Vec::new(),

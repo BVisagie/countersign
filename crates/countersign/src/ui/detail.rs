@@ -266,6 +266,13 @@ impl Detail {
                 .build();
             banner.set_margin_top(6);
             self.content.append(&banner);
+        } else if let Some(archived) = text(&item["archivedDate"]) {
+            let banner = adw::Banner::builder()
+                .title(format!("In the archive since {}", short_date(&archived)))
+                .revealed(true)
+                .build();
+            banner.set_margin_top(6);
+            self.content.append(&banner);
         }
 
         match kind {

@@ -64,6 +64,7 @@ enum Filter {
     Kind(ItemKind),
     Folder(Option<String>),
     Collection(String),
+    Archive,
     Trash,
     /// Not a filter: the generator page.
     Generator,
@@ -74,7 +75,7 @@ enum Filter {
 impl Filter {
     fn matches(&self, item: &ItemSummary) -> bool {
         match self {
-            Filter::All | Filter::Trash | Filter::Generator | Filter::Sends => true,
+            Filter::All | Filter::Archive | Filter::Trash | Filter::Generator | Filter::Sends => true,
             Filter::Favorites => item.favorite,
             Filter::Kind(kind) => item.kind == *kind,
             Filter::Folder(folder) => item.folder_id == *folder,
@@ -256,6 +257,7 @@ pub struct MainWindow {
     /// An item to select once it appears, after creating it.
     pending_select: RefCell<Option<String>>,
     trash: RefCell<Vec<Rc<ItemSummary>>>,
+    archived: RefCell<Vec<Rc<ItemSummary>>>,
     searcher: RefCell<Searcher>,
     account_email: gtk::Label,
     account_server: gtk::Label,
@@ -550,6 +552,7 @@ impl MainWindow {
             items: RefCell::default(),
             pending_select: RefCell::default(),
             trash: RefCell::default(),
+            archived: RefCell::default(),
             searcher: RefCell::default(),
             account_email,
             account_server,
@@ -1068,6 +1071,13 @@ impl MainWindow {
             .build();
         self.sidebar.append(&gap);
         filters.push(Filter::All);
+        add_row(
+            &mut filters,
+            Filter::Archive,
+            "package-x-generic-symbolic",
+            "Archive",
+            Some(vault.archived.len()),
+        );
         add_row(&mut filters, Filter::Trash, "user-trash-symbolic", "Trash", Some(vault.trash.len()));
         *self.filters.borrow_mut() = filters;
         self.show_vault_filter(selected);
@@ -1078,7 +1088,11 @@ impl MainWindow {
         let query = self.search.text();
         let recent = self.app.recent.borrow().clone();
         let (shown, total) = {
-            let source = if filter == Filter::Trash { self.trash.borrow() } else { self.items.borrow() };
+            let source = match filter {
+                Filter::Trash => self.trash.borrow(),
+                Filter::Archive => self.archived.borrow(),
+                _ => self.items.borrow(),
+            };
             let candidates: Vec<&Rc<ItemSummary>> = source.iter().filter(|i| filter.matches(i)).collect();
             let refs: Vec<&ItemSummary> = candidates.iter().map(|r| r.as_ref()).collect();
             let order =
@@ -1094,8 +1108,15 @@ impl MainWindow {
         });
         if shown.is_empty() {
             let narrowed = !query.is_empty() && filter != Filter::All;
-            self.empty.set_title(if query.is_empty() { "Nothing here yet" } else { "No matches" });
-            self.empty.set_description(Some(if query.is_empty() {
+            let archive = filter == Filter::Archive;
+            self.empty.set_title(match (query.is_empty(), archive) {
+                (true, true) => "Nothing archived",
+                (true, false) => "Nothing here yet",
+                _ => "No matches",
+            });
+            self.empty.set_description(Some(if query.is_empty() && archive {
+                "Archived items stay out of the vault and quick access. Archiving needs Bitwarden Premium."
+            } else if query.is_empty() {
                 "Items you add in this category appear here."
             } else if narrowed {
                 "Try fewer letters, or search all items."
@@ -1146,11 +1167,18 @@ impl MainWindow {
 
     /// Selects `id` now if the vault lists it, or as soon as it does.
     pub fn select_when_listed(&self, id: &str) {
-        if self.items.borrow().iter().any(|i| i.id == id) {
+        if self.selectable(id) {
             self.list.select_by_id(id);
         } else {
             *self.pending_select.borrow_mut() = Some(id.to_owned());
         }
+    }
+
+    /// Whether `id` is among the items an action can bring the list back to.
+    fn selectable(&self, id: &str) -> bool {
+        let archive = *self.filter.borrow() == Filter::Archive;
+        let items = if archive { self.archived.borrow() } else { self.items.borrow() };
+        items.iter().any(|i| i.id == id)
     }
 
     /// While the editor is open the list stays put: a sync that rebuilds
@@ -1452,12 +1480,13 @@ impl View for MainWindow {
     fn vault_changed(&self, vault: &Rc<VaultSnapshot>) {
         *self.items.borrow_mut() = vault.items.iter().cloned().map(Rc::new).collect();
         *self.trash.borrow_mut() = vault.trash.iter().cloned().map(Rc::new).collect();
+        *self.archived.borrow_mut() = vault.archived.iter().cloned().map(Rc::new).collect();
         self.detail.set_vault(vault);
         self.rebuild_sidebar(vault);
         self.refresh_list();
         let pending = self.pending_select.borrow_mut().take();
         if let Some(id) = pending {
-            if vault.items.iter().any(|i| i.id == id) {
+            if self.selectable(&id) {
                 self.search.set_text("");
                 self.list.select_by_id(&id);
             } else {
