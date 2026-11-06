@@ -796,10 +796,7 @@ impl Daemon {
         let mut snapshot = VaultSnapshot {
             items: items.iter().filter_map(summarize).collect(),
             trash: trash.iter().filter_map(summarize).collect(),
-            folders: folders
-                .iter()
-                .filter_map(|f| Some(Folder { id: text(f, "id")?, name: text(f, "name")? }))
-                .collect(),
+            folders: folders.iter().filter_map(folder).collect(),
             collections: collections
                 .iter()
                 .filter_map(|c| {
@@ -980,10 +977,7 @@ impl Daemon {
             }),
             Change::Deleted(id) => unlisted.item(id, None),
             Change::Folder(id, folder) => {
-                let folder = folder.and_then(|f| {
-                    Some(Folder { id: f["id"].as_str()?.to_owned(), name: f["name"].as_str()?.to_owned() })
-                });
-                unlisted.folder(id, folder);
+                unlisted.folder(id, folder.and_then(self::folder));
             }
         }
     }
@@ -1037,6 +1031,13 @@ pub(crate) fn password_error(error: BwError) -> IpcError {
 }
 
 /// Translates CLI failures into messages the app can act on.
+/// A folder as the CLI lists it. The CLI also lists its own "No Folder"
+/// entry, with an empty id, which is no folder.
+fn folder(value: &Value) -> Option<Folder> {
+    let id = value["id"].as_str().filter(|id| !id.is_empty())?;
+    Some(Folder { id: id.to_owned(), name: value["name"].as_str()?.to_owned() })
+}
+
 pub(crate) fn ipc_error(error: BwError) -> IpcError {
     match error {
         BwError::Locked => IpcError::new(ErrorCode::Locked, "The vault is locked."),
@@ -1120,6 +1121,17 @@ mod tests {
         // A lock since the attempt began wins.
         daemon.epoch.fetch_add(1, Ordering::SeqCst);
         assert!(daemon.mark_open(epoch).is_err());
+    }
+
+    /// The CLI lists its own "No Folder" entry, with an empty id. The app has
+    /// its own row for that, and the entry is no folder to rename or delete.
+    #[test]
+    fn the_clis_no_folder_entry_is_not_a_folder() {
+        let listed = serde_json::json!({"object": "folder", "id": "", "name": "No Folder"});
+        assert_eq!(folder(&listed), None);
+        assert_eq!(folder(&serde_json::json!({"id": null, "name": "No Folder"})), None);
+        let real = serde_json::json!({"id": "f1", "name": "Archive"});
+        assert_eq!(folder(&real), Some(Folder { id: "f1".into(), name: "Archive".into() }));
     }
 
     /// Stands in for the CLI: logs each call to the profile folder and
