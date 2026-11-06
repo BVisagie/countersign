@@ -52,7 +52,7 @@ theme for Omarchy.
 
 ## Status
 
-Early: 0.1.0 is the first release. It is built and tested on Omarchy.
+Early: Countersign is built and tested on Omarchy.
 [The roadmap](docs/ROADMAP.md) lists the known limitations,
 [the changelog](CHANGELOG.md) what each release changed, and
 [Performance](docs/PERFORMANCE.md) has the measurements.
