@@ -293,22 +293,27 @@ impl MainWindow {
         let dot = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         dot.add_css_class("cs-dot");
         dot.set_valign(gtk::Align::Center);
+        // Shortened in the middle, so a long address keeps both ends.
         let account_email = label("", &["cs-account-email"]);
-        account_email.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        account_email.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
         let account_server = label("", &["cs-account-server"]);
+        account_server.set_ellipsize(gtk::pango::EllipsizeMode::End);
         let sync_label = label("", &["cs-account-server"]);
-        let account_text = gtk::Box::new(gtk::Orientation::Vertical, 1);
-        account_text.set_hexpand(true);
-        account_text.append(&account_email);
-        account_text.append(&account_server);
-        account_text.append(&sync_label);
+        let account_details = gtk::Box::new(gtk::Orientation::Vertical, 1);
+        account_details.set_hexpand(true);
+        account_details.set_valign(gtk::Align::Center);
+        account_details.append(&account_server);
+        account_details.append(&sync_label);
         let lock_button = super::icon_button("system-lock-screen-symbolic", "Lock (Ctrl+L)");
         lock_button.set_action_name(Some("win.lock"));
-        let account = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+        lock_button.set_valign(gtk::Align::Center);
+        // The email has the whole width; the lock sits below it.
+        let account = gtk::Grid::builder().column_spacing(10).row_spacing(1).build();
         account.add_css_class("cs-account");
-        account.append(&dot);
-        account.append(&account_text);
-        account.append(&lock_button);
+        account.attach(&dot, 0, 0, 1, 1);
+        account.attach(&account_email, 1, 0, 2, 1);
+        account.attach(&account_details, 1, 1, 1, 1);
+        account.attach(&lock_button, 2, 1, 1, 1);
         // The tools stay pinned above the account, however long the
         // folder list grows.
         let tools = gtk::ListBox::new();
@@ -1422,8 +1427,12 @@ impl View for MainWindow {
             }
         }
         let account = status.account.as_ref();
-        self.account_email.set_label(account.and_then(|a| a.email.as_deref()).unwrap_or("Not signed in"));
-        self.account_server.set_label(&server_name(account.and_then(|a| a.server_url.as_deref())));
+        let email = account.and_then(|a| a.email.as_deref()).unwrap_or("Not signed in");
+        self.account_email.set_label(email);
+        self.account_email.set_tooltip_text(Some(email));
+        let server = server_name(account.and_then(|a| a.server_url.as_deref()));
+        self.account_server.set_label(&server);
+        self.account_server.set_tooltip_text(Some(&server));
         if status.vault != VaultState::Unlocked {
             self.generator.clear();
             self.sends.clear();
