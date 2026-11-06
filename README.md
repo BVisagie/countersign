@@ -19,8 +19,8 @@ interface and the desktop integration around it.
 - **Quick access.** A launcher-style overlay: type a few letters, press
   Enter, and the password is on the clipboard. Recent items come first.
 - **The whole vault.** Logins, cards, identities, notes and SSH keys, with
-  folders, organization collections, favorites, archive and trash, and a password and
-  passphrase generator. Secrets stay masked until you
+  folders, organization collections, favorites, archive and trash, and a
+  password and passphrase generator. Secrets stay masked until you
   reveal them. Verification codes count down live.
 - **Editing.** Create and edit logins, cards, identities and notes, with
   websites and custom fields; SSH keys keep their key and the rest can be
