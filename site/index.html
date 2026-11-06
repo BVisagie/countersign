@@ -1,0 +1,307 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; font-src 'self'; base-uri 'none'; form-action 'none'">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Countersign: a keyboard-first desktop app for Bitwarden on Omarchy</title>
+<meta name="description" content="A fast, keyboard-first desktop app for Bitwarden on Omarchy and Hyprland, built on the official Bitwarden CLI. Try quick access in your browser on a fictional vault.">
+<meta name="color-scheme" content="dark light">
+<link rel="canonical" href="https://bvisagie.github.io/countersign/">
+<link rel="icon" type="image/svg+xml" href="assets/icon.svg">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Countersign">
+<meta property="og:description" content="A fast, keyboard-first desktop app for Bitwarden on Omarchy and Hyprland.">
+<meta property="og:url" content="https://bvisagie.github.io/countersign/">
+<meta property="og:image" content="https://bvisagie.github.io/countersign/assets/main.png">
+<meta property="og:image:alt" content="Countersign's main window on a fictional vault">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="preload" href="fonts/archivo.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="fonts/jetbrains-mono.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="style.css">
+<script src="themes.js" defer></script>
+<script src="app.js" defer></script>
+</head>
+<body>
+<svg class="sprite" width="0" height="0" aria-hidden="true">
+  <symbol id="i-sentry" viewBox="23 22 82 82"><path d="M45 42 A19 19 0 1 1 83 42 A19 19 0 1 1 45 42 Z M41.5 36 A4.5 4.5 0 1 1 50.5 36 A4.5 4.5 0 1 1 41.5 36 Z M77.5 36 A4.5 4.5 0 1 1 86.5 36 A4.5 4.5 0 1 1 77.5 36 Z M56 54 L72 54 L81 96 Q82.5 103 75.5 103 L52.5 103 Q45.5 103 47 96 Z M51.73 38.47 A5.4 3.8 28 1 0 61.27 43.54 A5.4 3.8 28 1 0 51.73 38.47 Z M66.73 43.54 A5.4 3.8 -28 1 0 76.27 38.47 A5.4 3.8 -28 1 0 66.73 43.54 Z M61.4 52 A2.6 1.9 0 1 0 66.6 52 A2.6 1.9 0 1 0 61.4 52 Z M54.6 40.2 A1.6 1.6 0 1 1 57.8 40.2 A1.6 1.6 0 1 1 54.6 40.2 Z M70.2 40.2 A1.6 1.6 0 1 1 73.4 40.2 A1.6 1.6 0 1 1 70.2 40.2 Z"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20.5 20.5 16 16"/></symbol>
+  <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m8.5 12 2.5 2.5 4.5-5"/></symbol>
+  <symbol id="i-star" viewBox="0 0 24 24"><path d="m12 2.6 2.9 6 6.6.9-4.8 4.6 1.2 6.6-5.9-3.2-5.9 3.2 1.2-6.6L2.5 9.5l6.6-.9Z"/></symbol>
+  <symbol id="i-lock" viewBox="0 0 24 24"><path d="M7 10V7.5a5 5 0 0 1 10 0V10h1a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1v-9a1 1 0 0 1 1-1Zm2.2 0h5.6V7.5a2.8 2.8 0 0 0-5.6 0Z"/></symbol>
+  <symbol id="i-finger" viewBox="0 0 24 24"><path d="M5 11a7 7 0 0 1 14 0v2"/><path d="M8.5 21c-.8-2-1-4.5-1-8a4.5 4.5 0 0 1 9 0c0 3 .1 5 .8 7"/><path d="M12 12.5c0 3.5.3 6 1.3 8.5"/></symbol>
+  <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></symbol>
+  <symbol id="i-return" viewBox="0 0 24 24"><path d="M20 5v7a3 3 0 0 1-3 3H5"/><path d="m9 11-4 4 4 4"/></symbol>
+  <symbol id="i-out" viewBox="0 0 24 24"><path d="M7 17 17 7"/><path d="M8 7h9v9"/></symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1"/></symbol>
+</svg>
+
+<section class="hero" id="top">
+  <canvas id="sentry" aria-hidden="true"></canvas>
+  <header class="wrap top">
+    <a class="brand" href="#top"><svg aria-hidden="true"><use href="#i-sentry"/></svg>Countersign</a>
+    <nav aria-label="Main">
+      <a href="#try">Try it</a>
+      <a href="#how" class="hide-s">How it works</a>
+      <a href="#themes" class="hide-s">Themes</a>
+      <a href="https://github.com/BVisagie/countersign">GitHub</a>
+      <a class="ver" href="https://github.com/BVisagie/countersign/releases/latest">v@VERSION@</a>
+    </nav>
+  </header>
+
+  <div class="wrap hero-copy">
+    <h1>The fast way into<br> your Bitwarden vault.</h1>
+    <p class="lead">A keyboard-first desktop app for Omarchy and Hyprland. Type a few letters, press Enter, and the password is on your clipboard. Thirty seconds later, it isn't.</p>
+    <div class="cta">
+      <a class="btn primary" href="https://github.com/BVisagie/countersign#quick-start">Install on Omarchy</a>
+      <a class="btn text" href="https://github.com/BVisagie/countersign">Read every line of the source <svg class="i" aria-hidden="true"><use href="#i-out"/></svg></a>
+    </div>
+  </div>
+
+  <div class="stage" id="try">
+    <div class="col-side left">
+      <aside class="tile" id="t-clip" aria-label="Clipboard">
+        <div class="t-head"><span>clipboard</span><span id="clip-hist">empty</span></div>
+        <div class="t-main">
+          <svg class="ring" viewBox="0 0 36 36" aria-hidden="true"><circle class="track" cx="18" cy="18" r="15.5"/><circle class="prog" id="clip-ring" cx="18" cy="18" r="15.5" pathLength="100"/></svg>
+          <div class="t-text"><strong id="clip-title">Nothing copied</strong><small id="clip-sub">Press Enter on an item</small></div>
+        </div>
+      </aside>
+      <aside class="tile" id="t-code" aria-label="Verification code">
+        <div class="t-head"><span>verification code</span><span id="code-for">GitHub</span></div>
+        <div class="t-main">
+          <svg class="ring" viewBox="0 0 36 36" aria-hidden="true"><circle class="track" cx="18" cy="18" r="15.5"/><circle class="prog" id="code-ring" cx="18" cy="18" r="15.5" pathLength="100"/></svg>
+          <div class="t-text"><strong class="big" id="code-val">474 761</strong><small id="code-sub">new code in 30s</small></div>
+        </div>
+      </aside>
+      <div class="side-note">
+        <b>Try this</b>
+        <ul>
+          <li><kbd><svg class="i" role="img" aria-label="Enter"><use href="#i-return"/></svg></kbd> copy, then watch the code replace it</li>
+          <li><kbd>bank</kbd> an item that asks twice</li>
+          <li><kbd>Ctrl L</kbd> lock, and the sentry ducks</li>
+          <li><kbd>Ctrl T</kbd> your browser keeps this one, so click it</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="col-mid">
+      <div class="qa" id="qa" data-view="list" role="group" aria-label="Quick access demo with a fictional vault">
+        <div class="qa-search" id="qa-search">
+          <svg class="i" aria-hidden="true"><use href="#i-search"/></svg>
+          <input id="qa-input" type="text" role="combobox" aria-expanded="true" aria-controls="qa-list" aria-autocomplete="list" aria-label="Search the fictional vault" placeholder="Search vault" autocomplete="off" autocapitalize="off" spellcheck="false">
+          <span id="qa-count" aria-live="polite"></span>
+        </div>
+        <div class="qa-body">
+          <ul class="qa-view" id="qa-list" role="listbox" aria-label="Items"><noscript><li class="empty">This demo and the theme picker need JavaScript. The rest of the page does not.</li></noscript></ul>
+          <div class="qa-view detail" id="qa-detail" hidden></div>
+          <div class="qa-view" id="qa-closed" hidden>
+            <div class="qa-center">
+              <div class="big-ring">
+                <svg class="ring" viewBox="0 0 36 36" aria-hidden="true"><circle class="track" cx="18" cy="18" r="16.5"/><circle class="prog" id="closed-ring" cx="18" cy="18" r="16.5" pathLength="100"/></svg>
+                <b id="closed-secs">30</b>
+              </div>
+              <h3 id="closed-title" aria-live="polite">Password copied</h3>
+              <p id="closed-sub">GitHub · clears in 30s</p>
+              <p>Quick access closes after a copy, and the copy is marked so Omarchy's clipboard history skips it.</p>
+              <div class="cta">
+                <button class="linkish" id="qa-skip" type="button" hidden>Skip the code</button>
+                <button class="linkish" id="qa-reopen" type="button">Open quick access (press /)</button>
+              </div>
+            </div>
+          </div>
+          <div class="qa-view" id="qa-locked" hidden>
+            <form class="qa-center" id="qa-gate">
+              <svg class="mascot" aria-hidden="true"><use href="#i-sentry"/></svg>
+              <h3 id="gate-title">Unlock your vault</h3>
+              <p id="gate-sub">alex@fictional.dev · Bitwarden cloud, EU</p>
+              <div class="pass">
+                <input id="qa-pass" type="password" aria-label="Master password for the fictional vault" placeholder="Any text works here" autocomplete="off">
+                <button type="submit" id="gate-btn">Unlock</button>
+              </div>
+            </form>
+          </div>
+        </div>
+        <div class="qa-bar" id="qa-bar" hidden></div>
+        <div class="qa-foot" id="qa-foot">
+          <button type="button" data-act="copy"><span class="key"><svg class="i" role="img" aria-label="Enter"><use href="#i-return"/></svg></span>copy</button>
+          <button type="button" data-act="alt"><span class="key">⇧<svg class="i" role="img" aria-label="Enter"><use href="#i-return"/></svg></span>username</button>
+          <button type="button" data-act="code"><span class="key">Ctrl T</span>code</button>
+          <button type="button" data-act="open" class="opt"><span class="key">Ctrl U</span>open</button>
+          <button type="button" data-act="details"><span class="key">Ctrl O</span>details</button>
+          <button type="button" data-act="esc" class="esc"><span class="key">Esc</span></button>
+        </div>
+      </div>
+      <p class="below-qa fine">This window runs in your browser on a fictional vault and never touches your real clipboard.<br>The app itself: x86_64 and ARM · GPL-3.0 · other Hyprland desktops build from source.</p>
+    </div>
+
+    <div class="col-side right">
+      <aside class="tile" id="t-vault" aria-label="Vault state">
+        <div class="t-head"><span>vault</span><button class="mini" id="lock-btn" type="button">Lock</button></div>
+        <div class="t-main">
+          <span class="dot" id="vault-dot"></span>
+          <div class="t-text"><strong id="vault-state">Unlocked</strong><small>alex@fictional.dev</small></div>
+        </div>
+      </aside>
+      <aside class="tile" id="t-theme" aria-label="Theme">
+        <div class="t-head"><span>theme</span><button class="mini" id="theme-next" type="button">Next</button></div>
+        <div class="t-main">
+          <div class="t-text"><strong id="theme-name">Sentry</strong><div class="sw" aria-hidden="true"><i class="sw-accent"></i><i class="sw-1"></i><i class="sw-2"></i><i class="sw-3"></i><i class="sw-4"></i></div></div>
+        </div>
+      </aside>
+      <div class="side-note">
+        <b>Locks when you do</b>
+        <ul>
+          <li>After 15 idle minutes</li>
+          <li>When the screen locks</li>
+          <li>Before the computer sleeps</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="wrap speed" aria-label="Measured speed">
+  <dl class="metrics">
+    <div><dt>30–50 ms</dt><dd>for quick access to open</dd></div>
+    <div><dt>0.21–0.42 ms</dt><dd>to search 5,000 items per keystroke</dd></div>
+    <div><dt>12–18 ms</dt><dd>to copy to the clipboard</dd></div>
+    <div><dt>88 MB</dt><dd>for the app and daemon together</dd></div>
+    <div><dt>0.00%</dt><dd>idle CPU over 30 seconds</dd></div>
+  </dl>
+  <p class="note">Measured on 31 October 2026 on Omarchy 4.0.6 with release builds. GTK timings come from a headless display, so painting on Hyprland has not been timed. The official CLI adds 205–300 MB of its own. <a href="https://github.com/BVisagie/countersign/blob/main/docs/PERFORMANCE.md">All the numbers</a></p>
+</section>
+
+<section class="how" id="how">
+  <div class="wrap how-pin">
+    <div class="how-copy">
+      <h2>We left the cryptography to Bitwarden.</h2>
+      <p class="lead">Countersign never encrypts your vault and never talks to Bitwarden's servers. The official CLI does both. We wrote the window, the keys and the cleanup.</p>
+      <ol class="steps" id="steps">
+        <li>You press Enter in quick access.</li>
+        <li>The app asks the daemon to copy. It sends an item id, never a secret.</li>
+        <li>The daemon asks the official CLI over a private socket pair.</li>
+        <li>The CLI decrypts the value and hands it to the daemon.</li>
+        <li class="on">The daemon puts it on the clipboard. The app never sees it.</li>
+      </ol>
+    </div>
+    <div class="scene" aria-hidden="true">
+      <div class="iso" id="iso">
+        <div class="plate z3"><span class="whose">your account</span><b>Bitwarden</b><small>US cloud, EU cloud or self-hosted</small></div>
+        <div class="plate z2"><span class="whose">Bitwarden's code</span><b>bw serve</b><small>encryption · sync · server API</small></div>
+        <div class="plate ours z1"><span class="whose">our code</span><b>countersignd</b><small>session · index · locks</small><span class="chip">clipboard</span></div>
+        <div class="plate ours z0"><span class="whose">our code</span><b>countersign</b><small>main window · quick access · theme</small></div>
+        <div class="pillar"></div>
+        <div class="packet" id="packet"></div>
+      </div>
+    </div>
+  </div>
+</section>
+<section class="wrap facts-band" aria-label="Security facts">
+  <ul class="facts">
+    <li><b>No open ports</b>The CLI's server listens on no port and no path. Only the daemon holds the other end of its socket pair.</li>
+    <li><b>Secrets stay out of the app</b>The app gets item details with secrets removed. A secret arrives only when you reveal or edit it.</li>
+    <li><b>Checked downloads</b>Countersign installs the official CLI and checks it against a checksum recorded in its source.</li>
+  </ul>
+</section>
+
+<section class="band" id="themes">
+  <div class="wrap">
+    <div class="head-row">
+      <h2>It wears your theme.</h2>
+      <p class="lead">Countersign reads Omarchy's active palette and Hyprland's corner rounding, in light or dark, and switches when you do. Press a theme. This page uses the same real colors.</p>
+    </div>
+    <div class="grid-themes" id="grid-themes" role="group" aria-label="Omarchy themes"></div>
+    <div class="theme-reset">
+      <button class="mini" id="theme-reset" type="button">Back to this page's colors</button>
+      <span class="note">InkyPinky is by HANCORE. The rest ship with Omarchy.</span>
+    </div>
+  </div>
+</section>
+
+<section class="band">
+  <div class="wrap">
+    <div class="head-row">
+      <h2>The whole vault lives here too.</h2>
+      <p class="lead">Quick access gets you in and out. The main window handles everything else, with the same keys.</p>
+    </div>
+    <div class="shots">
+      <img src="assets/main.png" width="1229" height="922" loading="lazy" alt="The main window with a sidebar of item types and folders, a list of items, and GitHub's details">
+      <div class="stack2">
+        <img src="assets/edit.png" width="1229" height="922" loading="lazy" alt="The item editor">
+        <img src="assets/sends.png" width="1229" height="922" loading="lazy" alt="The Send page">
+      </div>
+    </div>
+    <p class="note cap">Real screenshots of a fictional vault, in the InkyPinky theme.</p>
+    <dl class="feats">
+      <div><dt>Every item type</dt><dd>Logins, cards, identities, notes and SSH keys, with folders, organization collections, favorites, archive and trash.</dd></div>
+      <div><dt>Editing</dt><dd>Create and edit logins, cards, identities and notes, with websites and custom fields. Manage folders and attachments.</dd></div>
+      <div><dt>Send</dt><dd>Share text or a file through Bitwarden Send. A new Send's link goes straight to the clipboard.</dd></div>
+      <div><dt>Generator</dt><dd>Passwords and passphrases, without leaving the keyboard.</dd></div>
+      <div><dt>Masked by default</dt><dd>Secrets stay hidden until you reveal them. Verification codes count down live.</dd></div>
+      <div><dt>A clean clipboard</dt><dd>Copies clear after 30 seconds and skip Omarchy's clipboard history. A password gives way to its one-time code.</dd></div>
+    </dl>
+  </div>
+</section>
+
+<section class="band">
+  <div class="wrap">
+    <div class="head-row"><h2>The mouse can stay where it is.</h2></div>
+    <dl class="keys">
+      <div><dt><kbd>Enter</kbd></dt><dd>Copy the password, card number or note</dd></div>
+      <div><dt><kbd>Ctrl F</kbd><kbd>/</kbd></dt><dd>Search</dd></div>
+      <div><dt><kbd>Shift Enter</kbd></dt><dd>Copy the username or security code</dd></div>
+      <div><dt><kbd>Ctrl R</kbd></dt><dd>Sync</dd></div>
+      <div><dt><kbd>Ctrl C</kbd><kbd>B</kbd><kbd>T</kbd></dt><dd>Copy the password, username or code</dd></div>
+      <div><dt><kbd>Ctrl L</kbd></dt><dd>Lock</dd></div>
+      <div><dt><kbd>Ctrl U</kbd></dt><dd>Open the website</dd></div>
+      <div><dt><kbd>Ctrl N</kbd></dt><dd>New login</dd></div>
+      <div><dt><kbd>Ctrl O</kbd></dt><dd>Show the item in the main window</dd></div>
+      <div><dt><kbd>Ctrl G</kbd></dt><dd>Password generator</dd></div>
+      <div><dt><kbd>Esc</kbd></dt><dd>Clear the search, then close quick access</dd></div>
+      <div><dt><kbd>Ctrl ,</kbd></dt><dd>Settings</dd></div>
+    </dl>
+  </div>
+</section>
+
+<section class="band">
+  <div class="wrap early">
+    <div>
+      <h2>It's early. Here's what isn't done.</h2>
+      <p class="lead">Countersign is built and tested on Omarchy. An AUR package comes next.</p>
+    </div>
+    <ul class="todo">
+      <li><b>Attachments and file Sends</b> are built, but have only been tested against a free account, which refuses them.</li>
+      <li><b>Archived items</b> need Premium to show. If Premium ends, they stay in the web vault until they're unarchived there.</li>
+      <li><b>The ARM build</b> is built and tested on every release, but nobody has used it on Omarchy on ARM yet.</li>
+      <li><b>SSH keys</b> can't be created, because the official CLI can't generate or import them.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="band">
+  <div class="wrap end">
+    <svg aria-hidden="true"><use href="#i-sentry"/></svg>
+    <h2>Post the sentry.</h2>
+    <p class="lead">Five steps. The download is checked against its SHA-256 sum before anything unpacks.</p>
+    <div class="cta">
+      <a class="btn primary" href="https://github.com/BVisagie/countersign#quick-start">Install on Omarchy</a>
+      <a class="btn text" href="https://github.com/BVisagie/countersign/blob/main/docs/USAGE.md">Read the guide <svg class="i" aria-hidden="true"><use href="#i-out"/></svg></a>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap foot">
+    <p class="note">Countersign is an independent project, not affiliated with or endorsed by Bitwarden, Inc. Licensed under the GNU GPL v3.0 or later.</p>
+    <nav aria-label="Documentation">
+      <a href="https://github.com/BVisagie/countersign/blob/main/docs/INSTALL.md">Install</a>
+      <a href="https://github.com/BVisagie/countersign/blob/main/docs/ARCHITECTURE.md">Architecture</a>
+      <a href="https://github.com/BVisagie/countersign/blob/main/docs/SECURITY.md">Security</a>
+      <a href="https://github.com/BVisagie/countersign/blob/main/docs/ROADMAP.md">Roadmap</a>
+      <a href="https://github.com/BVisagie/countersign/blob/main/CHANGELOG.md">Changelog</a>
+    </nav>
+  </div>
+</footer>
+</body>
+</html>
