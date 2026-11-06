@@ -59,8 +59,11 @@ jobs:
           gpgv --keyring ./archlinuxarm.gpg root.tar.gz.sig root.tar.gz
           docker import root.tar.gz countersign-build
           rm root.tar.gz root.tar.gz.sig archlinuxarm.gpg
+      # Only a tag's build reports a plain version; any other is a dev build.
       - name: Build, check and pack
-        run: docker run --rm -v "$GITHUB_WORKSPACE:/src" -w /src countersign-build scripts/release-build.sh
+        env:
+          COUNTERSIGN_RELEASE: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+        run: docker run --rm -e COUNTERSIGN_RELEASE -v "$GITHUB_WORKSPACE:/src" -w /src countersign-build scripts/release-build.sh
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: countersign-${{ matrix.arch }}
