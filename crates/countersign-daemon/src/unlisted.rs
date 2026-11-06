@@ -8,6 +8,11 @@
 //! list until the list shows it, or until a sync that started after the
 //! change has finished. Changes from elsewhere arrive only through a sync,
 //! so after one the CLI's lists are the truth again.
+//!
+//! Reading one item can be behind too, for about 150 ms after one change in
+//! four. Building a change on such a read undoes the change before it, so
+//! the daemon also keeps the revision each change returned, and reads wait
+//! for it; see `behind`.
 
 use std::collections::{HashMap, HashSet};
 
@@ -20,15 +25,42 @@ pub(crate) struct Unlisted {
     items: HashMap<String, (Option<ItemSummary>, u64)>,
     /// Folders as a change left them, `None` once deleted.
     folders: HashMap<String, (Option<Folder>, u64)>,
+    /// The revision a change returned for an item, with the number of the
+    /// change, until reading the item shows it.
+    revisions: HashMap<String, (String, u64)>,
     /// Changes recorded so far.
     changes: u64,
 }
 
 impl Unlisted {
-    /// An item as a change returned it, or `None` once deleted for good.
+    /// An item as a change returned it. Reads wait for its revision.
+    pub(crate) fn returned(&mut self, item: ItemSummary) {
+        let id = item.id.clone();
+        let revision = item.revision.clone();
+        self.item(id.clone(), Some(item));
+        if let Some(revision) = revision {
+            self.revisions.insert(id, (revision, self.changes));
+        }
+    }
+
+    /// An item as a change left it, or `None` once deleted for good. No
+    /// revision is known, so reads stop waiting for an earlier one.
     pub(crate) fn item(&mut self, id: String, item: Option<ItemSummary>) {
         self.changes += 1;
+        self.revisions.remove(&id);
         self.items.insert(id, (item, self.changes));
+    }
+
+    /// Whether a read of an item, with this revision, is from before the
+    /// last change returned. Revisions are UTC timestamps in one format, so
+    /// they sort as text. A read that has caught up ends the wait.
+    pub(crate) fn behind(&mut self, id: &str, read: Option<&str>) -> bool {
+        let Some((revision, _)) = self.revisions.get(id) else { return false };
+        if read.is_some_and(|read| read < revision.as_str()) {
+            return true;
+        }
+        self.revisions.remove(id);
+        false
     }
 
     /// An item changed in a way the change did not return, such as moving it
@@ -76,6 +108,7 @@ impl Unlisted {
     pub(crate) fn forget_before(&mut self, mark: u64) {
         self.items.retain(|_, (_, change)| *change > mark);
         self.folders.retain(|_, (_, change)| *change > mark);
+        self.revisions.retain(|_, (_, change)| *change > mark);
     }
 
     /// Corrects a snapshot built from the CLI's lists, and forgets each
@@ -176,6 +209,49 @@ mod tests {
         unlisted.apply(&mut current);
         assert!(unlisted.items.is_empty());
         assert_eq!(names(&current.items), ["new"]);
+    }
+
+    #[test]
+    fn a_read_is_behind_until_it_shows_the_change() {
+        let mut unlisted = Unlisted::default();
+        unlisted.returned(item("a", "new", T2, false));
+        assert!(unlisted.behind("a", Some(T1)));
+        assert!(unlisted.behind("a", Some(T1)));
+        assert!(!unlisted.behind("a", Some(T2)));
+        // Caught up, so an older read no longer waits.
+        assert!(!unlisted.behind("a", Some(T1)));
+        assert!(!unlisted.behind("b", Some(T1)));
+    }
+
+    #[test]
+    fn a_newer_read_or_none_is_not_behind() {
+        let mut unlisted = Unlisted::default();
+        unlisted.returned(item("a", "new", T2, false));
+        assert!(!unlisted.behind("a", Some(T3)));
+        unlisted.returned(item("b", "new", T2, false));
+        assert!(!unlisted.behind("b", None));
+    }
+
+    #[test]
+    fn a_change_without_a_revision_ends_the_wait() {
+        let mut unlisted = Unlisted::default();
+        unlisted.returned(item("a", "new", T2, false));
+        unlisted.derive("a", None, |i| i.deleted = true);
+        assert!(!unlisted.behind("a", Some(T1)));
+        unlisted.returned(item("b", "new", T2, false));
+        unlisted.item("b".into(), None);
+        assert!(!unlisted.behind("b", Some(T1)));
+    }
+
+    #[test]
+    fn a_sync_ends_the_wait_for_changes_before_it() {
+        let mut unlisted = Unlisted::default();
+        unlisted.returned(item("a", "new", T2, false));
+        let mark = unlisted.mark();
+        unlisted.returned(item("b", "new", T2, false));
+        unlisted.forget_before(mark);
+        assert!(!unlisted.behind("a", Some(T1)));
+        assert!(unlisted.behind("b", Some(T1)));
     }
 
     #[test]

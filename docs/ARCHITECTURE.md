@@ -55,12 +55,18 @@ the latest change: an edited item keeps its old name, a renamed folder its
 old name, a new one is missing. Folders catch up within seconds; items stay
 behind until a later change or a sync
 ([bitwarden/clients#24432](https://github.com/bitwarden/clients/issues/24432)).
-Reading an item back can be behind for a moment too. So the
-daemon keeps what each change left, from the change's reply or, for the
-trash and attachments, from what it knew already, and lays it over every
+So the daemon keeps what each change left, from the change's reply or, for
+the trash and attachments, from what it knew already, and lays it over every
 list until the list shows it. Changes from other devices arrive only
 through a sync, so a sync retires what came before it. Changes run one at a
 time, and one still running when the vault locks leaves nothing behind.
+
+Reading one item can be behind too, for about 150 ms after one change in
+four, and a change built on such a read undoes the one before it. So the
+daemon keeps the revision each change returned and asks again for up to two
+seconds while a read is older. After that a read gives what the CLI has, but
+opening the editor or setting a favorite fails and asks the user to try
+again.
 `crates/countersign-daemon/src/contract.rs` checks this against the real
 CLI.
 
