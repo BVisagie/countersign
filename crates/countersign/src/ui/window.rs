@@ -362,16 +362,15 @@ impl MainWindow {
         section.append(Some("Keyboard shortcuts"), Some("app.shortcuts"));
         section.append(Some("About Countersign"), Some("app.about"));
         menu.append_section(None, &section);
-        let menu_button = gtk::MenuButton::builder()
-            .icon_name("open-menu-symbolic")
-            .menu_model(&menu)
-            .tooltip_text("Menu")
-            .primary(true)
-            .build();
+        // The menu belongs to the app, so it sits in the sidebar, on every
+        // page. A collapsed sidebar hides it, so the list then has its own.
+        let sidebar_menu = main_menu_button(&menu);
+        sidebar_header.pack_end(&sidebar_menu);
+        let list_menu = main_menu_button(&menu);
         let list_header =
             adw::HeaderBar::builder().title_widget(&search).show_end_title_buttons(false).build();
         list_header.pack_start(&sidebar_toggle);
-        list_header.pack_end(&menu_button);
+        list_header.pack_end(&list_menu);
         let new_menu = gio::Menu::new();
         for (label, kind) in
             [("New login", "login"), ("New card", "card"), ("New identity", "identity"), ("New note", "note")]
@@ -476,6 +475,10 @@ impl MainWindow {
             toggle.bind_property("active", &split, "show-sidebar").bidirectional().build();
             split.bind_property("collapsed", toggle, "visible").sync_create().build();
         }
+        split.bind_property("collapsed", &list_menu, "visible").sync_create().build();
+        // F10 opens the one on show.
+        split.bind_property("collapsed", &list_menu, "primary").sync_create().build();
+        split.bind_property("collapsed", &sidebar_menu, "primary").invert_boolean().sync_create().build();
 
         let wide =
             adw::Breakpoint::new(adw::BreakpointCondition::parse("max-width: 980sp").expect("condition"));
@@ -1352,6 +1355,25 @@ const TOOLS: [(Filter, &str, &str); 2] = [
 ];
 
 /// A sidebar row: icon, name and an optional count.
+/// A button for the main menu. Its tooltip stays away while the menu is open,
+/// or it would cover the menu's first row.
+fn main_menu_button(menu: &gio::Menu) -> gtk::MenuButton {
+    let button = gtk::MenuButton::builder()
+        .icon_name("open-menu-symbolic")
+        .menu_model(menu)
+        .tooltip_text("Menu")
+        .build();
+    if let Some(popover) = button.popover() {
+        let weak = button.downgrade();
+        popover.connect_visible_notify(move |popover| {
+            if let Some(button) = weak.upgrade() {
+                button.set_has_tooltip(!popover.is_visible());
+            }
+        });
+    }
+    button
+}
+
 fn nav_row(icon: &str, text: &str, count: Option<usize>) -> gtk::Box {
     let row = gtk::Box::new(gtk::Orientation::Horizontal, 10);
     let image = gtk::Image::from_icon_name(icon);
