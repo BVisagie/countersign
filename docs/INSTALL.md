@@ -128,7 +128,7 @@ Countersign downloads only when you ask, never in the background.
 
 ### Use your own CLI
 
-Any stable release **2026.10.0 or newer** works; prereleases and development
+Any stable release **2026.10.1 or newer** works; prereleases and development
 builds are refused. Put `bw` on your `PATH`, or choose it under **Settings →
 Bitwarden CLI → Use a CLI on this computer…**. **Use the managed CLI** switches
 back.
@@ -148,7 +148,7 @@ Countersign uses the first of:
 
 ### Versions
 
-The minimum, 2026.10.0, is the oldest release Countersign has been tested
+The minimum, 2026.10.1, is the oldest release Countersign has been tested
 against. There is no maximum: newer releases are accepted. The copy
 Countersign installs is pinned to one release, because its checksum is
 recorded in Countersign's source.
@@ -208,7 +208,7 @@ If you use your own CLI, update it as you normally would.
 ## Troubleshooting
 
 **"This Bitwarden CLI is too old".** Countersign found a CLI older than
-2026.10.0, often Arch's package. Install the official CLI from the same
+2026.10.1, often Arch's package. Install the official CLI from the same
 page, or choose a newer one.
 
 **"Countersign can't reach the Bitwarden CLI".** The message below it comes

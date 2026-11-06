@@ -19,13 +19,13 @@ interface and the desktop integration around it.
 - **Quick access.** A launcher-style overlay: type a few letters, press
   Enter, and the password is on the clipboard. Recent items come first.
 - **The whole vault.** Logins, cards, identities, notes and SSH keys, with
-  folders, organization collections, favorites and trash, and a password and
-  passphrase generator. Secrets stay masked until you
+  folders, organization collections, favorites, archive and trash, and a
+  password and passphrase generator. Secrets stay masked until you
   reveal them. Verification codes count down live.
 - **Editing.** Create and edit logins, cards, identities and notes, with
   websites and custom fields; SSH keys keep their key and the rest can be
   edited. Manage folders and attachments, move items to an organization,
-  and trash, restore or delete forever.
+  archive, trash, restore or delete forever.
 - **Send.** Share text or a file through Bitwarden Send. A new Send's link
   goes straight to the clipboard.
 - **A clipboard that cleans up.** Copies clear themselves after 30 seconds
@@ -88,7 +88,7 @@ code, [build it from source](docs/INSTALL.md#build-from-source) instead.
    the Bitwarden CLI, does both, and Countersign is the window around it.
    If it asks, choose **Install the official CLI**: Countersign downloads it
    and checks it against a checksum recorded in its source. Countersign works with CLI
-   **2026.10.0 or newer**, and installs 2026.10.1.
+   **2026.10.1 or newer**, and installs 2026.10.1.
 
 4. **Sign in.** Choose your server (US cloud, EU cloud or self-hosted), sign
    in with your email or an API key, then unlock with your master password.

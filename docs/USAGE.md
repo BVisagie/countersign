@@ -56,10 +56,12 @@ main window instead.
 ## The main window
 
 The sidebar filters the vault: all items, favorites, each item type, your
-folders, organization collections and the trash. Folders nest as they do in
-Bitwarden: a folder named `Work/Clients` shows as **Clients** under **Work**,
-when a folder named `Work` exists. The password generator and Send stay at
-the foot of the sidebar.
+folders, organization collections, the archive and the trash. Folders nest
+as they do in Bitwarden: a folder named `Work/Clients` shows as **Clients**
+under **Work**, when a folder named `Work` exists. The password generator and
+Send stay at the foot of the sidebar. The main menu is the **≡** button beside
+the name at the top of the sidebar; when the window is too narrow for the
+sidebar, it moves next to the search box.
 
 Search covers what the sidebar shows. When a search in a folder or a type
 finds nothing, **Search all items** widens it.
@@ -129,12 +131,17 @@ is not cleared.
   anything.
 - **SSH keys** show their public key and fingerprint; the key itself cannot
   be changed. Everything else can.
-- While you edit, syncs leave your draft alone. Locking throws it away.
+- While you edit, syncs leave your draft alone. Quitting asks before it
+  throws your edits away. Locking throws them away without asking.
 - **More actions** are in the **⋮** menu: add or remove a favorite, **Add
-  attachment…**, **Move to organization…** and **Move to trash**. Moving to
-  an organization needs at least one collection and cannot be undone from
+  attachment…**, **Move to organization…**, **Archive** and **Move to
+  trash**. Moving to an organization needs at least one collection and cannot be undone from
   Countersign. Attachments need Bitwarden Premium. **Undo**, in the message
-  that follows, takes an item back out of the trash.
+  that follows, takes an item back out of the trash or the archive.
+- **Archive.** Bitwarden keeps archived items out of the vault, so they do
+  not show in All items, search or quick access. Pick **Archive** in the
+  sidebar to see them; they can still be read, copied and edited there, and
+  the menu offers **Unarchive**. Archiving needs Bitwarden Premium.
 - **In the trash**, the menu offers **Restore** and **Delete forever…**.
 - **Delete an attachment** with the bin button on its row.
 - **Folders.** The **+** button offers **New folder…**. To rename or delete a

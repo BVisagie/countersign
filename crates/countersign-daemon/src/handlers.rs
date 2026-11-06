@@ -252,6 +252,15 @@ impl Daemon {
                 self.changed(&change, &client, Change::Restored(id)).await;
                 Ok(Response::Ok)
             }
+            R::ArchiveItem { id } => {
+                self.touch();
+                let change = self.begin_change().await;
+                let client = self.client().await?;
+                let known = self.knows_item(&id);
+                self.on_known(known, || client.archive_item(&id)).await.map_err(ipc_error)?;
+                self.changed(&change, &client, Change::Archived(id)).await;
+                Ok(Response::Ok)
+            }
             R::CreateFolder { name } => {
                 let name = folder_name(&name)?;
                 let change = self.begin_change().await;

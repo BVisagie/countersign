@@ -64,6 +64,7 @@ enum Filter {
     Kind(ItemKind),
     Folder(Option<String>),
     Collection(String),
+    Archive,
     Trash,
     /// Not a filter: the generator page.
     Generator,
@@ -74,7 +75,7 @@ enum Filter {
 impl Filter {
     fn matches(&self, item: &ItemSummary) -> bool {
         match self {
-            Filter::All | Filter::Trash | Filter::Generator | Filter::Sends => true,
+            Filter::All | Filter::Archive | Filter::Trash | Filter::Generator | Filter::Sends => true,
             Filter::Favorites => item.favorite,
             Filter::Kind(kind) => item.kind == *kind,
             Filter::Folder(folder) => item.folder_id == *folder,
@@ -256,6 +257,7 @@ pub struct MainWindow {
     /// An item to select once it appears, after creating it.
     pending_select: RefCell<Option<String>>,
     trash: RefCell<Vec<Rc<ItemSummary>>>,
+    archived: RefCell<Vec<Rc<ItemSummary>>>,
     searcher: RefCell<Searcher>,
     account_email: gtk::Label,
     account_server: gtk::Label,
@@ -360,16 +362,15 @@ impl MainWindow {
         section.append(Some("Keyboard shortcuts"), Some("app.shortcuts"));
         section.append(Some("About Countersign"), Some("app.about"));
         menu.append_section(None, &section);
-        let menu_button = gtk::MenuButton::builder()
-            .icon_name("open-menu-symbolic")
-            .menu_model(&menu)
-            .tooltip_text("Menu")
-            .primary(true)
-            .build();
+        // The menu belongs to the app, so it sits in the sidebar, on every
+        // page. A collapsed sidebar hides it, so the list then has its own.
+        let sidebar_menu = main_menu_button(&menu);
+        sidebar_header.pack_end(&sidebar_menu);
+        let list_menu = main_menu_button(&menu);
         let list_header =
             adw::HeaderBar::builder().title_widget(&search).show_end_title_buttons(false).build();
         list_header.pack_start(&sidebar_toggle);
-        list_header.pack_end(&menu_button);
+        list_header.pack_end(&list_menu);
         let new_menu = gio::Menu::new();
         for (label, kind) in
             [("New login", "login"), ("New card", "card"), ("New identity", "identity"), ("New note", "note")]
@@ -474,6 +475,10 @@ impl MainWindow {
             toggle.bind_property("active", &split, "show-sidebar").bidirectional().build();
             split.bind_property("collapsed", toggle, "visible").sync_create().build();
         }
+        split.bind_property("collapsed", &list_menu, "visible").sync_create().build();
+        // F10 opens the one on show.
+        split.bind_property("collapsed", &list_menu, "primary").sync_create().build();
+        split.bind_property("collapsed", &sidebar_menu, "primary").invert_boolean().sync_create().build();
 
         let wide =
             adw::Breakpoint::new(adw::BreakpointCondition::parse("max-width: 980sp").expect("condition"));
@@ -550,6 +555,7 @@ impl MainWindow {
             items: RefCell::default(),
             pending_select: RefCell::default(),
             trash: RefCell::default(),
+            archived: RefCell::default(),
             searcher: RefCell::default(),
             account_email,
             account_server,
@@ -871,8 +877,10 @@ impl MainWindow {
         {
             let app = self.app.clone();
             self.window.connect_close_request(move |window| {
-                window.set_visible(false);
-                if !app.settings.borrow().close_to_background {
+                if app.settings.borrow().close_to_background {
+                    // An edit in progress is still there when it comes back.
+                    window.set_visible(false);
+                } else {
                     // Quit like Ctrl+Q does, which locks the vault first.
                     app.gtk.activate_action("quit", None);
                 }
@@ -1068,6 +1076,13 @@ impl MainWindow {
             .build();
         self.sidebar.append(&gap);
         filters.push(Filter::All);
+        add_row(
+            &mut filters,
+            Filter::Archive,
+            "package-x-generic-symbolic",
+            "Archive",
+            Some(vault.archived.len()),
+        );
         add_row(&mut filters, Filter::Trash, "user-trash-symbolic", "Trash", Some(vault.trash.len()));
         *self.filters.borrow_mut() = filters;
         self.show_vault_filter(selected);
@@ -1078,7 +1093,11 @@ impl MainWindow {
         let query = self.search.text();
         let recent = self.app.recent.borrow().clone();
         let (shown, total) = {
-            let source = if filter == Filter::Trash { self.trash.borrow() } else { self.items.borrow() };
+            let source = match filter {
+                Filter::Trash => self.trash.borrow(),
+                Filter::Archive => self.archived.borrow(),
+                _ => self.items.borrow(),
+            };
             let candidates: Vec<&Rc<ItemSummary>> = source.iter().filter(|i| filter.matches(i)).collect();
             let refs: Vec<&ItemSummary> = candidates.iter().map(|r| r.as_ref()).collect();
             let order =
@@ -1094,8 +1113,15 @@ impl MainWindow {
         });
         if shown.is_empty() {
             let narrowed = !query.is_empty() && filter != Filter::All;
-            self.empty.set_title(if query.is_empty() { "Nothing here yet" } else { "No matches" });
-            self.empty.set_description(Some(if query.is_empty() {
+            let archive = filter == Filter::Archive;
+            self.empty.set_title(match (query.is_empty(), archive) {
+                (true, true) => "Nothing archived",
+                (true, false) => "Nothing here yet",
+                _ => "No matches",
+            });
+            self.empty.set_description(Some(if query.is_empty() && archive {
+                "Archived items stay out of the vault and quick access. Archiving needs Bitwarden Premium."
+            } else if query.is_empty() {
                 "Items you add in this category appear here."
             } else if narrowed {
                 "Try fewer letters, or search all items."
@@ -1146,10 +1172,28 @@ impl MainWindow {
 
     /// Selects `id` now if the vault lists it, or as soon as it does.
     pub fn select_when_listed(&self, id: &str) {
-        if self.items.borrow().iter().any(|i| i.id == id) {
+        if self.selectable(id) {
             self.list.select_by_id(id);
         } else {
             *self.pending_select.borrow_mut() = Some(id.to_owned());
+        }
+    }
+
+    /// Whether `id` is among the items an action can bring the list back to.
+    fn selectable(&self, id: &str) -> bool {
+        let archive = *self.filter.borrow() == Filter::Archive;
+        let items = if archive { self.archived.borrow() } else { self.items.borrow() };
+        items.iter().any(|i| i.id == id)
+    }
+
+    /// Runs `quit`, first asking if that would lose an edit in progress.
+    pub fn quit_after_asking(&self, quit: impl Fn() + 'static) {
+        if self.detail.has_unsaved_edits() {
+            // The tray can quit while the window is hidden.
+            self.window.present();
+            self.detail.ask_to_discard(quit);
+        } else {
+            quit();
         }
     }
 
@@ -1311,6 +1355,25 @@ const TOOLS: [(Filter, &str, &str); 2] = [
 ];
 
 /// A sidebar row: icon, name and an optional count.
+/// A button for the main menu. Its tooltip stays away while the menu is open,
+/// or it would cover the menu's first row.
+fn main_menu_button(menu: &gio::Menu) -> gtk::MenuButton {
+    let button = gtk::MenuButton::builder()
+        .icon_name("open-menu-symbolic")
+        .menu_model(menu)
+        .tooltip_text("Menu")
+        .build();
+    if let Some(popover) = button.popover() {
+        let weak = button.downgrade();
+        popover.connect_visible_notify(move |popover| {
+            if let Some(button) = weak.upgrade() {
+                button.set_has_tooltip(!popover.is_visible());
+            }
+        });
+    }
+    button
+}
+
 fn nav_row(icon: &str, text: &str, count: Option<usize>) -> gtk::Box {
     let row = gtk::Box::new(gtk::Orientation::Horizontal, 10);
     let image = gtk::Image::from_icon_name(icon);
@@ -1452,12 +1515,13 @@ impl View for MainWindow {
     fn vault_changed(&self, vault: &Rc<VaultSnapshot>) {
         *self.items.borrow_mut() = vault.items.iter().cloned().map(Rc::new).collect();
         *self.trash.borrow_mut() = vault.trash.iter().cloned().map(Rc::new).collect();
+        *self.archived.borrow_mut() = vault.archived.iter().cloned().map(Rc::new).collect();
         self.detail.set_vault(vault);
         self.rebuild_sidebar(vault);
         self.refresh_list();
         let pending = self.pending_select.borrow_mut().take();
         if let Some(id) = pending {
-            if vault.items.iter().any(|i| i.id == id) {
+            if self.selectable(&id) {
                 self.search.set_text("");
                 self.list.select_by_id(&id);
             } else {

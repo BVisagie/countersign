@@ -71,6 +71,7 @@ pub struct ItemSummary {
     pub attachments: u32,
     pub reprompt: bool,
     pub deleted: bool,
+    pub archived: bool,
     pub revision: Option<String>,
 }
 
@@ -136,6 +137,7 @@ pub fn summarize(item: &Value) -> Option<ItemSummary> {
         attachments: item["attachments"].as_array().map_or(0, |a| a.len() as u32),
         reprompt: item["reprompt"].as_i64() == Some(1),
         deleted: !item["deletedDate"].is_null(),
+        archived: !item["archivedDate"].is_null(),
         revision: text(&item["revisionDate"]),
     })
 }
@@ -198,11 +200,22 @@ pub struct Organization {
 pub struct VaultSnapshot {
     pub items: Vec<ItemSummary>,
     pub trash: Vec<ItemSummary>,
+    /// Kept out of `items`: Bitwarden leaves archived items out of the vault
+    /// and its searches. One both archived and in the trash is in `trash`.
+    pub archived: Vec<ItemSummary>,
     pub folders: Vec<Folder>,
     pub collections: Vec<Collection>,
     pub organizations: Vec<Organization>,
     /// Item ids most recently copied from, newest first.
     pub recent: Vec<String>,
+}
+
+impl VaultSnapshot {
+    /// Whether the item is a favorite. Items in the trash cannot be changed,
+    /// so they do not count.
+    pub fn is_favorite(&self, id: &str) -> bool {
+        self.items.iter().chain(&self.archived).any(|i| i.id == id && i.favorite)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -417,6 +430,25 @@ mod tests {
         let text = serde_json::to_value(&newer).unwrap();
         assert_eq!(text["update"], "2026.11.0");
         assert_eq!(serde_json::from_value::<CliState>(text).unwrap(), newer);
+    }
+
+    #[test]
+    fn archived_items_can_be_favorites() {
+        let note = |id: &str, favorite: bool| {
+            summarize(&json!({
+                "id": id, "type": 2, "name": id, "favorite": favorite,
+                "secureNote": {"type": 0}
+            }))
+            .unwrap()
+        };
+        let vault = VaultSnapshot {
+            items: vec![note("live", true)],
+            archived: vec![note("old", true), note("plain", false)],
+            ..Default::default()
+        };
+        assert!(vault.is_favorite("live"));
+        assert!(vault.is_favorite("old"));
+        assert!(!vault.is_favorite("plain"));
     }
 
     #[test]

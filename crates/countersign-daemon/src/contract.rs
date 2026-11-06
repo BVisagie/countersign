@@ -21,7 +21,7 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use countersign_ipc::{Request, Response, Secret, Settings, VaultSnapshot};
+use countersign_ipc::{ErrorCode, Request, Response, Secret, Settings, VaultSnapshot};
 use serde_json::{Value, json};
 
 use crate::core::{Change, Daemon};
@@ -92,7 +92,8 @@ async fn signed_in() -> (Arc<Daemon>, tempfile::TempDir) {
     ask(&daemon, Request::Unlock { password: secret_from("COUNTERSIGN_TEST_PASSWORD_FILE") }).await;
 
     let leftovers = daemon.vault();
-    for old in leftovers.items.iter().chain(&leftovers.trash).filter(|i| i.name.starts_with(PREFIX)) {
+    let all = leftovers.items.iter().chain(&leftovers.trash).chain(&leftovers.archived);
+    for old in all.filter(|i| i.name.starts_with(PREFIX)) {
         ask(&daemon, Request::DeleteItem { id: old.id.clone(), permanent: true }).await;
     }
     for old in leftovers.folders.iter().filter(|f| f.name.starts_with(PREFIX)) {
@@ -174,6 +175,32 @@ async fn the_index_shows_every_change_at_once() {
             "a restored item",
             item(&vault, &id).is_some() && !vault.trash.iter().any(|i| i.id == id),
         );
+        // Archiving needs Premium: a free account is refused and nothing moves.
+        match daemon.handle(Request::ArchiveItem { id: id.clone() }).await {
+            Ok(_) => {
+                let vault = daemon.vault();
+                check(
+                    &mut failures,
+                    "an archived item",
+                    item(&vault, &id).is_none() && vault.archived.iter().any(|i| i.id == id),
+                );
+                ask(&daemon, Request::RestoreItem { id: id.clone() }).await;
+                let vault = daemon.vault();
+                check(
+                    &mut failures,
+                    "an unarchived item",
+                    item(&vault, &id).is_some() && !vault.archived.iter().any(|i| i.id == id),
+                );
+            }
+            Err(e) => check(
+                &mut failures,
+                "a refusal to archive without Premium",
+                e.code == ErrorCode::Premium && item(&daemon.vault(), &id).is_some(),
+            ),
+        }
+        let vault = daemon.vault();
+        check(&mut failures, "only archived items in the archive", vault.archived.iter().all(|i| i.archived));
+        check(&mut failures, "only real folders", vault.folders.iter().all(|f| !f.id.is_empty()));
         ask(&daemon, Request::DeleteItem { id: id.clone(), permanent: true }).await;
         let vault = daemon.vault();
         check(

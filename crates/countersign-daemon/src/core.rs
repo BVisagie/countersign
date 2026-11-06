@@ -17,7 +17,7 @@ use countersign_bw::{
 };
 use countersign_ipc::{
     Account, CliState, ClipboardEvent, ClipboardState, Collection, ErrorCode, Event, Folder, IpcError,
-    Organization, Settings, Status, VaultSnapshot, VaultState, summarize,
+    ItemSummary, Organization, Settings, Status, VaultSnapshot, VaultState, summarize,
 };
 use secrecy::SecretString;
 use serde_json::Value;
@@ -789,17 +789,19 @@ impl Daemon {
         let _guard = self.rebuild.lock().await;
         let items = client.list_items(&ListOptions::default()).await?;
         let trash = client.list_items(&ListOptions { trash: true, ..Default::default() }).await?;
+        let archived = client.list_items(&ListOptions { archived: true, ..Default::default() }).await?;
+        // The trash list leaves out items that are also archived.
+        let archived_trash =
+            client.list_items(&ListOptions { trash: true, archived: true, ..Default::default() }).await?;
         let folders = client.list_folders().await?;
         let collections = client.list_collections().await?;
         let organizations = client.list_organizations().await?;
         let text = |v: &Value, k: &str| v[k].as_str().map(str::to_owned);
         let mut snapshot = VaultSnapshot {
             items: items.iter().filter_map(summarize).collect(),
-            trash: trash.iter().filter_map(summarize).collect(),
-            folders: folders
-                .iter()
-                .filter_map(|f| Some(Folder { id: text(f, "id")?, name: text(f, "name")? }))
-                .collect(),
+            trash: trash.iter().filter_map(summarize).chain(only_archived(&archived_trash)).collect(),
+            archived: only_archived(&archived).collect(),
+            folders: folders.iter().filter_map(folder).collect(),
             collections: collections
                 .iter()
                 .filter_map(|c| {
@@ -818,6 +820,8 @@ impl Daemon {
         };
         drop(items);
         drop(trash);
+        drop(archived);
+        drop(archived_trash);
         {
             let mut unlisted = self.unlisted.lock().expect("unlisted");
             if let Some(mark) = synced
@@ -830,6 +834,7 @@ impl Daemon {
         let by_name = |a: &String, b: &String| a.to_lowercase().cmp(&b.to_lowercase());
         snapshot.items.sort_by(|a, b| by_name(&a.name, &b.name));
         snapshot.trash.sort_by(|a, b| by_name(&a.name, &b.name));
+        snapshot.archived.sort_by(|a, b| by_name(&a.name, &b.name));
         snapshot.folders.sort_by(|a, b| by_name(&a.name, &b.name));
         snapshot.collections.sort_by(|a, b| by_name(&a.name, &b.name));
         let _slot = self.session.lock().expect("session");
@@ -897,7 +902,7 @@ impl Daemon {
 
     pub(crate) fn knows_item(&self, id: &str) -> bool {
         let vault = self.vault.lock().expect("vault").clone();
-        vault.items.iter().chain(&vault.trash).any(|i| i.id == id)
+        vault.items.iter().chain(&vault.trash).chain(&vault.archived).any(|i| i.id == id)
     }
 
     pub(crate) fn knows_folder(&self, id: &str) -> bool {
@@ -962,7 +967,7 @@ impl Daemon {
         }
         let indexed = |id: &str| {
             let vault = self.vault.lock().expect("vault").clone();
-            vault.items.iter().chain(&vault.trash).find(|i| i.id == id).cloned()
+            vault.items.iter().chain(&vault.trash).chain(&vault.archived).find(|i| i.id == id).cloned()
         };
         let mut unlisted = self.unlisted.lock().expect("unlisted");
         match change {
@@ -974,16 +979,14 @@ impl Daemon {
             // Reading the item back can be behind too, so these follow from
             // what is known already.
             Change::Trashed(id) => unlisted.derive(&id, indexed(&id).as_ref(), |i| i.deleted = true),
-            Change::Restored(id) => unlisted.derive(&id, indexed(&id).as_ref(), |i| i.deleted = false),
+            Change::Restored(id) => unlisted.derive(&id, indexed(&id).as_ref(), restored),
+            Change::Archived(id) => unlisted.derive(&id, indexed(&id).as_ref(), |i| i.archived = true),
             Change::AttachmentDeleted(id) => unlisted.derive(&id, indexed(&id).as_ref(), |i| {
                 i.attachments = i.attachments.saturating_sub(1);
             }),
             Change::Deleted(id) => unlisted.item(id, None),
             Change::Folder(id, folder) => {
-                let folder = folder.and_then(|f| {
-                    Some(Folder { id: f["id"].as_str()?.to_owned(), name: f["name"].as_str()?.to_owned() })
-                });
-                unlisted.folder(id, folder);
+                unlisted.folder(id, folder.and_then(self::folder));
             }
         }
     }
@@ -1001,8 +1004,10 @@ pub(crate) enum Change<'a> {
     Item(&'a Value),
     /// An item moved to the trash.
     Trashed(String),
-    /// An item restored from the trash.
+    /// An item restored from the trash or the archive.
     Restored(String),
+    /// An item moved to the archive.
+    Archived(String),
     /// An item that lost one attachment.
     AttachmentDeleted(String),
     /// An item deleted for good.
@@ -1037,6 +1042,29 @@ pub(crate) fn password_error(error: BwError) -> IpcError {
 }
 
 /// Translates CLI failures into messages the app can act on.
+/// The archived items in a list that asked for them. Without Premium the CLI
+/// ignores the request and lists the others, which must not show as archived.
+fn only_archived(list: &[Value]) -> impl Iterator<Item = ItemSummary> + '_ {
+    list.iter().filter_map(summarize).filter(|i| i.archived)
+}
+
+/// What restoring leaves, as the CLI decides it: an item in the trash comes
+/// out of the trash, and only one that is not leaves the archive.
+fn restored(item: &mut ItemSummary) {
+    if item.deleted {
+        item.deleted = false;
+    } else {
+        item.archived = false;
+    }
+}
+
+/// A folder as the CLI lists it. The CLI also lists its own "No Folder"
+/// entry, with an empty id, which is no folder.
+fn folder(value: &Value) -> Option<Folder> {
+    let id = value["id"].as_str().filter(|id| !id.is_empty())?;
+    Some(Folder { id: id.to_owned(), name: value["name"].as_str()?.to_owned() })
+}
+
 pub(crate) fn ipc_error(error: BwError) -> IpcError {
     match error {
         BwError::Locked => IpcError::new(ErrorCode::Locked, "The vault is locked."),
@@ -1120,6 +1148,49 @@ mod tests {
         // A lock since the attempt began wins.
         daemon.epoch.fetch_add(1, Ordering::SeqCst);
         assert!(daemon.mark_open(epoch).is_err());
+    }
+
+    fn listed(id: &str, deleted: bool, archived: bool) -> Value {
+        let date = |set: bool| if set { serde_json::json!("2026-11-06T10:00:00.000Z") } else { Value::Null };
+        serde_json::json!({
+            "id": id, "type": 2, "name": id, "secureNote": {"type": 0},
+            "deletedDate": date(deleted), "archivedDate": date(archived),
+        })
+    }
+
+    /// Without Premium the CLI answers a request for archived items with
+    /// the others, so the archive would otherwise fill with the whole vault.
+    #[test]
+    fn only_archived_items_count_as_archived() {
+        let list = [listed("live", false, false), listed("old", false, true)];
+        let ids: Vec<String> = only_archived(&list).map(|i| i.id).collect();
+        assert_eq!(ids, ["old"]);
+    }
+
+    #[test]
+    fn restoring_follows_the_cli() {
+        let mut archived = summarize(&listed("a", false, true)).unwrap();
+        restored(&mut archived);
+        assert!(!archived.archived);
+
+        let mut trashed = summarize(&listed("t", true, false)).unwrap();
+        restored(&mut trashed);
+        assert!(!trashed.deleted);
+
+        let mut both = summarize(&listed("b", true, true)).unwrap();
+        restored(&mut both);
+        assert!(!both.deleted && both.archived);
+    }
+
+    /// The CLI lists its own "No Folder" entry, with an empty id. The app has
+    /// its own row for that, and the entry is no folder to rename or delete.
+    #[test]
+    fn the_clis_no_folder_entry_is_not_a_folder() {
+        let listed = serde_json::json!({"object": "folder", "id": "", "name": "No Folder"});
+        assert_eq!(folder(&listed), None);
+        assert_eq!(folder(&serde_json::json!({"id": null, "name": "No Folder"})), None);
+        let real = serde_json::json!({"id": "f1", "name": "Archive"});
+        assert_eq!(folder(&real), Some(Folder { id: "f1".into(), name: "Archive".into() }));
     }
 
     /// Stands in for the CLI: logs each call to the profile folder and

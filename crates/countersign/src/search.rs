@@ -93,6 +93,7 @@ mod tests {
             attachments: 0,
             reprompt: false,
             deleted: false,
+            archived: false,
             revision: None,
         }
     }

@@ -153,12 +153,22 @@ fn install_actions(app: &Rc<App>) {
         add(
             "quit",
             Rc::new(move || {
-                // Lock before leaving, so quitting never leaves the vault open.
                 let app = app.clone();
-                glib::spawn_future_local(async move {
-                    let _ = app.request(countersign_ipc::Request::Lock).await;
-                    app.gtk.quit();
-                });
+                let quit = move || {
+                    if let Some(window) = ui::window::current() {
+                        window.window.set_visible(false);
+                    }
+                    // Lock before leaving, so quitting never leaves the vault open.
+                    let app = app.clone();
+                    glib::spawn_future_local(async move {
+                        let _ = app.request(countersign_ipc::Request::Lock).await;
+                        app.gtk.quit();
+                    });
+                };
+                match ui::window::current() {
+                    Some(window) => window.quit_after_asking(quit),
+                    None => quit(),
+                }
             }),
         );
     }
