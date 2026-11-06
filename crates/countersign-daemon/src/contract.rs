@@ -1,6 +1,7 @@
 //! A contract test of the daemon against the real official CLI and a
 //! Bitwarden test account: after each change, the vault index the app shows
-//! must already have it, however far behind the CLI's lists are.
+//! must already have it, however far behind the CLI's lists are, and reading
+//! the item must give what the change left.
 //!
 //! Ignored by default. Run with the variables the CLI contract test uses
 //! (see `crates/countersign-bw/tests/contract.rs`):
@@ -8,22 +9,27 @@
 //! ```text
 //! COUNTERSIGN_TEST_BW=… COUNTERSIGN_TEST_SERVER=… COUNTERSIGN_TEST_CLIENT_ID_FILE=… \
 //! COUNTERSIGN_TEST_CLIENT_SECRET_FILE=… COUNTERSIGN_TEST_PASSWORD_FILE=… \
-//! cargo test -p countersign-daemon contract -- --ignored --nocapture
+//! cargo test -p countersign-daemon contract -- --ignored --nocapture --test-threads=1
 //! ```
+//!
+//! One test at a time: each starts by deleting what the last run left, on the
+//! same account.
 //!
 //! Use a throwaway account only. The test creates and permanently deletes
 //! items and folders whose names start with `countersign-contract`.
 
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use countersign_ipc::{Request, Response, Secret, Settings, VaultSnapshot};
 use serde_json::{Value, json};
 
-use crate::core::Daemon;
+use crate::core::{Change, Daemon};
 use crate::paths::Paths;
 
 const PREFIX: &str = "countersign-contract";
 const ROUNDS: usize = 4;
+const READ_ROUNDS: usize = 24;
 
 fn secret_from(var: &str) -> Secret {
     let path = std::env::var(var).unwrap_or_else(|_| panic!("{var} is not set"));
@@ -56,9 +62,9 @@ fn item<'a>(vault: &'a VaultSnapshot, id: &str) -> Option<&'a countersign_ipc::I
     vault.items.iter().find(|i| i.id == id)
 }
 
-#[tokio::test]
-#[ignore]
-async fn the_index_shows_every_change_at_once() {
+/// A daemon signed in and unlocked on the test account, with what earlier
+/// runs left removed. The folder holds its files.
+async fn signed_in() -> (Arc<Daemon>, tempfile::TempDir) {
     let root = tempfile::tempdir().unwrap();
     let paths = Paths {
         settings_file: root.path().join("settings.toml"),
@@ -85,7 +91,6 @@ async fn the_index_shows_every_change_at_once() {
     // the changes below.
     ask(&daemon, Request::Unlock { password: secret_from("COUNTERSIGN_TEST_PASSWORD_FILE") }).await;
 
-    let client = daemon.client().await.unwrap();
     let leftovers = daemon.vault();
     for old in leftovers.items.iter().chain(&leftovers.trash).filter(|i| i.name.starts_with(PREFIX)) {
         ask(&daemon, Request::DeleteItem { id: old.id.clone(), permanent: true }).await;
@@ -93,6 +98,22 @@ async fn the_index_shows_every_change_at_once() {
     for old in leftovers.folders.iter().filter(|f| f.name.starts_with(PREFIX)) {
         ask(&daemon, Request::DeleteFolder { id: old.id.clone() }).await;
     }
+    (daemon, root)
+}
+
+/// The name of an item as the app would show it.
+async fn shown_name(daemon: &Arc<Daemon>, id: &str) -> String {
+    match ask(daemon, Request::Item { id: id.to_owned() }).await {
+        Response::Item { item, .. } => item["name"].as_str().unwrap().to_owned(),
+        _ => panic!("no item in the answer"),
+    }
+}
+
+#[tokio::test]
+#[ignore]
+async fn the_index_shows_every_change_at_once() {
+    let (daemon, _root) = signed_in().await;
+    let client = daemon.client().await.unwrap();
 
     let mut failures = Vec::new();
     for round in 0..ROUNDS {
@@ -164,4 +185,49 @@ async fn the_index_shows_every_change_at_once() {
 
     ask(&daemon, Request::Logout).await;
     assert!(failures.is_empty(), "the index missed: {failures:?}");
+}
+
+/// An item read while the CLI is still behind must show what the change left,
+/// and a change built on that read must not undo it. The CLI's own read is
+/// behind for a moment after about one change in four, so each round reads
+/// at once, without the rebuild that normally fills that moment.
+#[tokio::test]
+#[ignore]
+async fn reads_show_every_change_at_once() {
+    let (daemon, _root) = signed_in().await;
+    let client = daemon.client().await.unwrap();
+
+    let mut failures = Vec::new();
+    for round in 0..READ_ROUNDS {
+        let note = json!({
+            "type": 2, "name": format!("{PREFIX} read {round}"), "notes": null, "favorite": false,
+            "folderId": null, "reprompt": 0, "secureNote": {"type": 0}
+        });
+        let id = id_of(ask(&daemon, Request::CreateItem { item: note }).await);
+
+        let renamed = format!("{PREFIX} read {round} edited");
+        let mut full = client.get_item(&id).await.unwrap();
+        full["name"] = Value::from(renamed.clone());
+        {
+            let change = daemon.begin_change().await;
+            let edited = client.edit_item(&id, &full).await.unwrap();
+            daemon.record(&change, Change::Item(&edited));
+        }
+        let start = Instant::now();
+        if round % 2 == 0 {
+            check(&mut failures, "an edited name when read", shown_name(&daemon, &id).await == renamed);
+        } else {
+            let starred = daemon.handle(Request::SetFavorite { id: id.clone(), favorite: true }).await;
+            check(&mut failures, "a favorite straight after an edit", starred.is_ok());
+            tokio::time::sleep(Duration::from_millis(500)).await;
+            let stored = client.get_item(&id).await.unwrap();
+            check(&mut failures, "a name kept by a favorite", stored["name"] == renamed.as_str());
+        }
+        println!("round {round}: answered after {:?}", start.elapsed());
+
+        ask(&daemon, Request::DeleteItem { id, permanent: true }).await;
+    }
+
+    ask(&daemon, Request::Logout).await;
+    assert!(failures.is_empty(), "reads missed: {failures:?}");
 }

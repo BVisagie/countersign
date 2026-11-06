@@ -861,8 +861,38 @@ impl Daemon {
         }
     }
 
+    /// Reads an item, asking again for up to two seconds while the CLI
+    /// answers from before the last change; see `unlisted`. After that it
+    /// gives what the CLI has.
     pub(crate) async fn read_item(&self, client: &ServeClient, id: &str) -> Result<Value, BwError> {
-        self.on_known(self.knows_item(id), || client.get_item(id)).await
+        let known = self.knows_item(id);
+        let mut attempts = 0;
+        loop {
+            let item = self.on_known(known, || client.get_item(id)).await?;
+            if attempts == 20 || !self.read_behind(id, &item) {
+                return Ok(item);
+            }
+            attempts += 1;
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    }
+
+    /// Reads an item to build a change on. A change built on a read that is
+    /// behind would undo the one before it, so that is an error here.
+    pub(crate) async fn read_item_to_change(
+        &self,
+        client: &ServeClient,
+        id: &str,
+    ) -> Result<Value, IpcError> {
+        let item = self.read_item(client, id).await.map_err(ipc_error)?;
+        if self.read_behind(id, &item) {
+            return Err(IpcError::new(ErrorCode::Busy, "This item is still saving. Try again in a moment."));
+        }
+        Ok(item)
+    }
+
+    fn read_behind(&self, id: &str, item: &Value) -> bool {
+        self.unlisted.lock().expect("unlisted").behind(id, item["revisionDate"].as_str())
     }
 
     pub(crate) fn knows_item(&self, id: &str) -> bool {
@@ -925,7 +955,7 @@ impl Daemon {
 
     /// Keeps what a change left, unless its session has ended since it
     /// started.
-    fn record(&self, guard: &ChangeGuard<'_>, change: Change<'_>) {
+    pub(crate) fn record(&self, guard: &ChangeGuard<'_>, change: Change<'_>) {
         let slot = self.session.lock().expect("session");
         if slot.is_none() || self.epoch() != guard.epoch {
             return;
@@ -938,7 +968,7 @@ impl Daemon {
         match change {
             Change::Item(item) => {
                 if let Some(summary) = summarize(item) {
-                    unlisted.item(summary.id.clone(), Some(summary));
+                    unlisted.returned(summary);
                 }
             }
             // Reading the item back can be behind too, so these follow from

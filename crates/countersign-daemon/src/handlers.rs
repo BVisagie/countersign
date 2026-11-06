@@ -192,7 +192,7 @@ impl Daemon {
                 self.touch();
                 let item = {
                     let client = self.client().await?;
-                    self.read_item(&client, &id).await.map_err(ipc_error)?
+                    self.read_item_to_change(&client, &id).await?
                 };
                 self.check_reprompt(&id, &item)?;
                 Ok(Response::Json { value: item })
@@ -225,7 +225,7 @@ impl Daemon {
                 self.touch();
                 let change = self.begin_change().await;
                 let client = self.client().await?;
-                let mut item = self.read_item(&client, &id).await.map_err(ipc_error)?;
+                let mut item = self.read_item_to_change(&client, &id).await?;
                 item["favorite"] = Value::from(favorite);
                 let known = self.knows_item(&id);
                 let edited =
