@@ -498,7 +498,10 @@ impl MainWindow {
         let gate = |child: &gtk::Widget| {
             let view = adw::ToolbarView::new();
             view.add_top_bar(&adw::HeaderBar::builder().show_title(false).build());
-            view.set_content(Some(child));
+            // Over the page, so the version adds no height and moves no form.
+            let page = gtk::Overlay::builder().child(child).build();
+            page.add_overlay(&super::gates::version_footer());
+            view.set_content(Some(&page));
             view
         };
         stack.add_named(&gate(loading.upcast_ref()), Some("loading"));

@@ -60,6 +60,15 @@ pub fn mark() -> gtk::Box {
     mark
 }
 
+/// The version, at the foot of every page shown before the vault opens.
+pub fn version_footer() -> gtk::Label {
+    let version = label(&format!("Version {}", crate::VERSION), &["cs-meta"]);
+    version.set_halign(gtk::Align::Center);
+    version.set_valign(gtk::Align::End);
+    version.set_margin_bottom(12);
+    version
+}
+
 /// The unlock form, used by the main window and quick access.
 ///
 /// While the vault opens, from this form or anywhere else, the form takes
