@@ -9,7 +9,7 @@ pub struct CliVersion {
 }
 
 /// The oldest release whose `bw serve` contract Countersign has verified.
-pub const MINIMUM_VERSION: CliVersion = CliVersion::new(2026, 10, 0);
+pub const MINIMUM_VERSION: CliVersion = CliVersion::new(2026, 10, 1);
 
 /// The release Countersign installs when it manages the CLI itself.
 pub const PINNED_VERSION: CliVersion = CliVersion::new(2026, 10, 1);
@@ -97,8 +97,8 @@ mod tests {
     #[test]
     fn compares_numerically() {
         assert!(CliVersion::new(2026, 10, 0) > CliVersion::new(2026, 9, 1));
-        assert!(CliVersion::new(2026, 10, 0).is_supported());
-        assert!(!CliVersion::new(2026, 9, 1).is_supported());
+        assert!(CliVersion::new(2026, 10, 1).is_supported());
+        assert!(!CliVersion::new(2026, 10, 0).is_supported());
         assert!(PINNED_VERSION.is_supported());
     }
 

@@ -128,7 +128,7 @@ Countersign downloads only when you ask, never in the background.
 
 ### Use your own CLI
 
-Any stable release **2026.10.0 or newer** works; prereleases and development
+Any stable release **2026.10.1 or newer** works; prereleases and development
 builds are refused. Put `bw` on your `PATH`, or choose it under **Settings →
 Bitwarden CLI → Use a CLI on this computer…**. **Use the managed CLI** switches
 back.

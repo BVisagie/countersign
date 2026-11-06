@@ -88,7 +88,7 @@ code, [build it from source](docs/INSTALL.md#build-from-source) instead.
    the Bitwarden CLI, does both, and Countersign is the window around it.
    If it asks, choose **Install the official CLI**: Countersign downloads it
    and checks it against a checksum recorded in its source. Countersign works with CLI
-   **2026.10.0 or newer**, and installs 2026.10.1.
+   **2026.10.1 or newer**, and installs 2026.10.1.
 
 4. **Sign in.** Choose your server (US cloud, EU cloud or self-hosted), sign
    in with your email or an API key, then unlock with your master password.
