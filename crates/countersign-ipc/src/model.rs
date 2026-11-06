@@ -210,6 +210,14 @@ pub struct VaultSnapshot {
     pub recent: Vec<String>,
 }
 
+impl VaultSnapshot {
+    /// Whether the item is a favorite. Items in the trash cannot be changed,
+    /// so they do not count.
+    pub fn is_favorite(&self, id: &str) -> bool {
+        self.items.iter().chain(&self.archived).any(|i| i.id == id && i.favorite)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum CliState {
@@ -422,6 +430,25 @@ mod tests {
         let text = serde_json::to_value(&newer).unwrap();
         assert_eq!(text["update"], "2026.11.0");
         assert_eq!(serde_json::from_value::<CliState>(text).unwrap(), newer);
+    }
+
+    #[test]
+    fn archived_items_can_be_favorites() {
+        let note = |id: &str, favorite: bool| {
+            summarize(&json!({
+                "id": id, "type": 2, "name": id, "favorite": favorite,
+                "secureNote": {"type": 0}
+            }))
+            .unwrap()
+        };
+        let vault = VaultSnapshot {
+            items: vec![note("live", true)],
+            archived: vec![note("old", true), note("plain", false)],
+            ..Default::default()
+        };
+        assert!(vault.is_favorite("live"));
+        assert!(vault.is_favorite("old"));
+        assert!(!vault.is_favorite("plain"));
     }
 
     #[test]

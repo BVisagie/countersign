@@ -220,7 +220,7 @@ impl Detail {
     /// Done in the daemon, so the item's secrets never reach the app.
     pub(super) fn toggle_favorite(self: &Rc<Self>) {
         let Some(id) = self.current_id() else { return };
-        let favorite = !self.vault.borrow().items.iter().any(|i| i.id == id && i.favorite);
+        let favorite = !self.vault.borrow().is_favorite(&id);
         let me = self.clone();
         glib::spawn_future_local(async move {
             match me.app.request(Request::SetFavorite { id: id.clone(), favorite }).await {
