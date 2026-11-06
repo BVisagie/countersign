@@ -153,10 +153,10 @@ impl Detail {
         self.root.set_visible_child_name("edit");
         // The editor's Cancel and Save take the place of the item's buttons.
         self.actions.set_visible(false);
-        self.header_start.append(&editor.cancel);
-        self.header_end.append(&editor.save);
+        self.edit_bar.set_start_widget(Some(&editor.cancel));
+        self.edit_bar.set_end_widget(Some(&editor.save));
         self.header_title.set_label(editor.heading);
-        self.header_title.set_visible(true);
+        self.edit_row.set_visible(true);
         if let Some(window) = super::window::current() {
             window.set_editing(true);
         }
@@ -198,9 +198,9 @@ impl Detail {
     pub(super) fn close_editor(&self) {
         let Some(editor) = self.editor.borrow_mut().take() else { return };
         self.root.remove(&editor.root);
-        super::clear(&self.header_start);
-        super::clear(&self.header_end);
-        self.header_title.set_visible(false);
+        self.edit_bar.set_start_widget(gtk::Widget::NONE);
+        self.edit_bar.set_end_widget(gtk::Widget::NONE);
+        self.edit_row.set_visible(false);
         self.actions.set_visible(true);
         if let Some(window) = super::window::current() {
             window.set_editing(false);

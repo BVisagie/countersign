@@ -136,6 +136,10 @@ enum FieldValue {
     Linked,
 }
 
+/// The widest the form grows: the 600 of `adw::PreferencesPage` less its
+/// margins.
+pub const FORM_WIDTH: i32 = 576;
+
 pub struct Editor {
     pub root: gtk::Widget,
     app: Rc<App>,

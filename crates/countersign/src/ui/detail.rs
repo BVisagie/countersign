@@ -29,8 +29,9 @@ pub struct Detail {
     /// editor's Cancel and Save.
     pub header: adw::HeaderBar,
     pub(super) actions: gtk::Box,
-    pub(super) header_start: gtk::Box,
-    pub(super) header_end: gtk::Box,
+    /// The editor's Cancel, title and Save, in `edit_row`.
+    pub(super) edit_bar: gtk::CenterBox,
+    pub(super) edit_row: adw::Clamp,
     pub(super) header_title: gtk::Label,
     content: gtk::Box,
     pub(super) app: Rc<App>,
@@ -72,20 +73,29 @@ impl Detail {
         let actions = gtk::Box::new(gtk::Orientation::Horizontal, 4);
         actions.append(&edit_button);
         actions.append(&menu_button);
-        let header_start = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-        let header_end = gtk::Box::new(gtk::Orientation::Horizontal, 6);
         let header_title = label("", &["title"]);
-        header_title.set_visible(false);
-        let header = adw::HeaderBar::builder().title_widget(&header_title).build();
-        header.pack_start(&header_start);
+        let edit_bar = gtk::CenterBox::new();
+        edit_bar.set_center_widget(Some(&header_title));
+        // As wide as the form, so on a wide window Cancel and Save stay by
+        // it, and Save stays clear of the window's close button.
+        let edit_row = adw::Clamp::builder()
+            .maximum_size(super::editor::FORM_WIDTH)
+            .tightening_threshold(super::editor::FORM_WIDTH)
+            .child(&edit_bar)
+            .hexpand(true)
+            .visible(false)
+            .build();
+        let header = adw::HeaderBar::builder()
+            .title_widget(&edit_row)
+            .centering_policy(adw::CenteringPolicy::Strict)
+            .build();
         header.pack_end(&actions);
-        header.pack_end(&header_end);
         let detail = Rc::new(Detail {
             root,
             header,
             actions,
-            header_start,
-            header_end,
+            edit_bar,
+            edit_row,
             header_title,
             content,
             app: app.clone(),
