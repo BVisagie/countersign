@@ -172,6 +172,20 @@ impl Detail {
         }
     }
 
+    /// Whether the open editor holds edits that are not saved.
+    pub fn has_unsaved_edits(&self) -> bool {
+        self.editor.borrow().as_ref().is_some_and(|editor| editor.has_changes())
+    }
+
+    /// Asks whether to discard the open editor's edits, and runs `discard` if
+    /// so.
+    pub fn ask_to_discard(&self, discard: impl Fn() + 'static) {
+        let editor = self.editor.borrow().clone();
+        if let Some(editor) = editor {
+            editor.ask_to_discard(discard);
+        }
+    }
+
     /// Saves the open editor.
     pub fn save_edit(&self) {
         let editor = self.editor.borrow().clone();

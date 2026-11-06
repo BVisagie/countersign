@@ -874,8 +874,10 @@ impl MainWindow {
         {
             let app = self.app.clone();
             self.window.connect_close_request(move |window| {
-                window.set_visible(false);
-                if !app.settings.borrow().close_to_background {
+                if app.settings.borrow().close_to_background {
+                    // An edit in progress is still there when it comes back.
+                    window.set_visible(false);
+                } else {
                     // Quit like Ctrl+Q does, which locks the vault first.
                     app.gtk.activate_action("quit", None);
                 }
@@ -1179,6 +1181,17 @@ impl MainWindow {
         let archive = *self.filter.borrow() == Filter::Archive;
         let items = if archive { self.archived.borrow() } else { self.items.borrow() };
         items.iter().any(|i| i.id == id)
+    }
+
+    /// Runs `quit`, first asking if that would lose an edit in progress.
+    pub fn quit_after_asking(&self, quit: impl Fn() + 'static) {
+        if self.detail.has_unsaved_edits() {
+            // The tray can quit while the window is hidden.
+            self.window.present();
+            self.detail.ask_to_discard(quit);
+        } else {
+            quit();
+        }
     }
 
     /// While the editor is open the list stays put: a sync that rebuilds

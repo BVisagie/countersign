@@ -129,7 +129,8 @@ is not cleared.
   anything.
 - **SSH keys** show their public key and fingerprint; the key itself cannot
   be changed. Everything else can.
-- While you edit, syncs leave your draft alone. Locking throws it away.
+- While you edit, syncs leave your draft alone. Quitting asks before it
+  throws your edits away. Locking throws them away without asking.
 - **More actions** are in the **⋮** menu: add or remove a favorite, **Add
   attachment…**, **Move to organization…**, **Archive** and **Move to trash**. Moving to
   an organization needs at least one collection and cannot be undone from

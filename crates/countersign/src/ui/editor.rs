@@ -168,6 +168,8 @@ pub struct Editor {
     pub heading: &'static str,
     /// A fingerprint of the form as it opened, to tell whether it changed.
     baseline: Cell<u64>,
+    /// Whether the discard dialog is open, so a second request adds no other.
+    asking: Cell<bool>,
 }
 
 impl Editor {
@@ -397,6 +399,7 @@ impl Editor {
             save: save.clone(),
             heading: if creating { "New item" } else { "Edit item" },
             baseline: Cell::new(0),
+            asking: Cell::new(false),
         });
         for (original, row) in uris {
             editor.add_uri(original, row);
@@ -462,10 +465,31 @@ impl Editor {
         hasher.finish()
     }
 
+    /// Whether the form would save anything different from what it opened.
+    pub fn has_changes(&self) -> bool {
+        self.fingerprint() != self.baseline.get()
+    }
+
     /// Leaves the editor, first asking whether to discard any changes.
     pub fn cancel(self: &Rc<Self>) {
-        if self.fingerprint() == self.baseline.get() {
+        if !self.has_changes() {
             (self.on_done)(None);
+            return;
+        }
+        let weak = Rc::downgrade(self);
+        self.ask_to_discard(move || {
+            if let Some(me) = weak.upgrade()
+                // Locking may have closed the editor meanwhile.
+                && me.root.parent().is_some()
+            {
+                (me.on_done)(None);
+            }
+        });
+    }
+
+    /// Asks whether to discard the changes, and runs `discard` if so.
+    pub fn ask_to_discard(self: &Rc<Self>, discard: impl Fn() + 'static) {
+        if self.asking.replace(true) {
             return;
         }
         let dialog = adw::AlertDialog::builder()
@@ -478,12 +502,11 @@ impl Editor {
         dialog.set_response_appearance("discard", adw::ResponseAppearance::Destructive);
         let weak = Rc::downgrade(self);
         dialog.connect_response(None, move |_, response| {
-            if response == "discard"
-                && let Some(me) = weak.upgrade()
-                // Locking may have closed the editor meanwhile.
-                && me.root.parent().is_some()
-            {
-                (me.on_done)(None);
+            if let Some(me) = weak.upgrade() {
+                me.asking.set(false);
+            }
+            if response == "discard" {
+                discard();
             }
         });
         dialog.present(Some(&self.root));
