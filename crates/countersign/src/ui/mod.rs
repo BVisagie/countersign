@@ -147,10 +147,9 @@ mod tests {
         text.set_property("visibility", !shown);
     }
 
-    #[test]
+    #[gtk::test]
     #[ignore = "needs a display"]
     fn masked_spacing_follows_the_peek() {
-        gtk::init().expect("a display");
         adw::init().expect("libadwaita");
         let entry = gtk::PasswordEntry::new();
         let row = adw::PasswordEntryRow::new();

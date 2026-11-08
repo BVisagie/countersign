@@ -29,7 +29,10 @@ struct Panel {
     root: gtk::Box,
     app: Rc<App>,
     value: gtk::Label,
+    /// The shown value, while it was made with the options shown.
     current: RefCell<Option<Secret>>,
+    /// Buttons that take the value, usable only while there is one.
+    takers: Vec<gtk::Widget>,
     notify: Rc<dyn Fn(&str)>,
     controls: Controls,
     pending: RefCell<Option<glib::SourceId>>,
@@ -186,8 +189,14 @@ pub(super) fn markup(value: &str) -> Zeroizing<String> {
 }
 
 impl Panel {
-    /// `actions` sit beside the regenerate button.
-    fn new(app: &Rc<App>, notify: Rc<dyn Fn(&str)>, actions: &[&gtk::Widget]) -> Rc<Self> {
+    /// `actions` sit beside the regenerate button. `takers` are the buttons
+    /// that take the value.
+    fn new(
+        app: &Rc<App>,
+        notify: Rc<dyn Fn(&str)>,
+        actions: &[&gtk::Widget],
+        takers: Vec<gtk::Widget>,
+    ) -> Rc<Self> {
         let value = gtk::Label::builder()
             .wrap(true)
             .wrap_mode(gtk::pango::WrapMode::Char)
@@ -221,6 +230,7 @@ impl Panel {
             app: app.clone(),
             value,
             current: RefCell::default(),
+            takers,
             notify,
             controls,
             pending: RefCell::default(),
@@ -230,6 +240,7 @@ impl Panel {
         });
         panel.connect(&regenerate);
         panel.show_mode();
+        panel.set_ready(false);
         panel
     }
 
@@ -240,6 +251,7 @@ impl Panel {
             if let Some(me) = weak.upgrade()
                 && !me.applying.get()
             {
+                me.invalidate();
                 me.show_mode();
                 me.schedule();
                 me.remember();
@@ -295,13 +307,29 @@ impl Panel {
         // A change still waiting to be stored is newer than the stored one.
         let changed = self.remember.borrow().is_none() && stored != self.controls.options();
         if changed {
+            self.invalidate();
             self.applying.set(true);
             self.controls.apply(&stored);
             self.applying.set(false);
             self.show_mode();
         }
-        if changed || self.current.borrow().is_none() {
+        if self.current.borrow().is_none() {
             self.generate();
+        }
+    }
+
+    /// The options changed, so the shown value no longer matches them:
+    /// nothing can take it, and a value still coming for the old options is
+    /// dropped. It stays on screen until the new one arrives.
+    fn invalidate(&self) {
+        self.generation.set(self.generation.get() + 1);
+        self.current.borrow_mut().take();
+        self.set_ready(false);
+    }
+
+    fn set_ready(&self, ready: bool) {
+        for taker in &self.takers {
+            taker.set_sensitive(ready);
         }
     }
 
@@ -363,6 +391,7 @@ impl Panel {
                 Ok(Response::Secret { value }) => {
                     me.value.set_markup(&markup(value.expose()));
                     *me.current.borrow_mut() = Some(value);
+                    me.set_ready(true);
                 }
                 Ok(_) => {}
                 Err(e) => (me.notify)(&e.message),
@@ -379,6 +408,7 @@ impl Panel {
             source.remove();
         }
         self.current.borrow_mut().take();
+        self.set_ready(false);
         self.value.set_label("");
     }
 }
@@ -391,7 +421,7 @@ impl Generator {
         receipt: &gtk::Widget,
     ) -> Rc<Self> {
         let copy = gtk::Button::builder().label("Copy").css_classes(["suggested-action", "pill"]).build();
-        let panel = Panel::new(app, notify, &[copy.upcast_ref()]);
+        let panel = Panel::new(app, notify, &[copy.upcast_ref()], vec![copy.clone().upcast()]);
         let clamp = adw::Clamp::builder().maximum_size(640).child(&panel.root).build();
         let scroll = gtk::ScrolledWindow::builder()
             .hscrollbar_policy(gtk::PolicyType::Never)
@@ -457,7 +487,8 @@ pub fn choose(app: &Rc<App>, parent: &gtk::Widget, on_use: impl Fn(Secret) + 'st
             }
         }
     });
-    let panel = Panel::new(app, notify, &[]);
+    let accept = gtk::Button::builder().css_classes(["suggested-action"]).build();
+    let panel = Panel::new(app, notify, &[], vec![accept.clone().upcast()]);
     let scroll = gtk::ScrolledWindow::builder()
         .hscrollbar_policy(gtk::PolicyType::Never)
         .propagate_natural_height(true)
@@ -466,7 +497,6 @@ pub fn choose(app: &Rc<App>, parent: &gtk::Widget, on_use: impl Fn(Secret) + 'st
     toasts.set_child(Some(&scroll));
 
     let cancel = gtk::Button::with_label("Cancel");
-    let accept = gtk::Button::builder().css_classes(["suggested-action"]).build();
     let header =
         adw::HeaderBar::builder().show_start_title_buttons(false).show_end_title_buttons(false).build();
     header.pack_start(&cancel);
@@ -479,8 +509,6 @@ pub fn choose(app: &Rc<App>, parent: &gtk::Widget, on_use: impl Fn(Secret) + 'st
         .content_width(460)
         .child(&view)
         .default_widget(&accept)
-        // Enter means Use, not Cancel.
-        .focus_widget(&accept)
         .build();
 
     let name_accept = {
@@ -494,6 +522,17 @@ pub fn choose(app: &Rc<App>, parent: &gtk::Widget, on_use: impl Fn(Secret) + 'st
     name_accept();
     panel.controls.mode.connect_active_name_notify(move |_| name_accept());
     {
+        // Use waits for the first value, so it cannot take focus as the
+        // dialog opens. It takes it once the value arrives, so Enter means
+        // Use, not Cancel.
+        let focused = Cell::new(false);
+        accept.connect_sensitive_notify(move |accept| {
+            if accept.is_sensitive() && !focused.replace(true) {
+                accept.grab_focus();
+            }
+        });
+    }
+    {
         let dialog = dialog.downgrade();
         cancel.connect_clicked(move |_| {
             if let Some(dialog) = dialog.upgrade() {
@@ -505,7 +544,7 @@ pub fn choose(app: &Rc<App>, parent: &gtk::Widget, on_use: impl Fn(Secret) + 'st
         let (panel, dialog) = (Rc::downgrade(&panel), dialog.downgrade());
         accept.connect_clicked(move |_| {
             let (Some(panel), Some(dialog)) = (panel.upgrade(), dialog.upgrade()) else { return };
-            // Nothing to use until the first value arrives.
+            // Nothing to use until a value made with these options arrives.
             let Some(value) = panel.current.borrow_mut().take() else { return };
             on_use(value);
             dialog.close();
@@ -541,10 +580,9 @@ mod tests {
 
     /// The controls show stored options as they are, so the page and the
     /// dialog read back what the other stored.
-    #[test]
+    #[gtk::test]
     #[ignore = "needs a display"]
     fn controls_show_the_options_they_are_given() {
-        gtk::init().expect("a display");
         adw::init().expect("libadwaita");
         let controls = Controls::new();
         assert_eq!(controls.options(), GenerateOptions::default());
