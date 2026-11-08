@@ -125,10 +125,11 @@ is not cleared.
 - **Edit an item** with the pencil button above its details, or `Ctrl+E`.
   The editor covers the name, folder, favorite, **Ask for the master
   password**, the item's own fields, websites, notes and custom fields
-  (text, hidden or checkbox). The password field has a button that
-  generates one, with the generator's options. Save or cancel at the top,
-  or press `Ctrl+S` or `Esc`. Cancelling asks first if you changed
-  anything.
+  (text, hidden or checkbox). The password field's generate button opens
+  the generator, where you choose a password or passphrase and its
+  options; **Use** puts the value in the field, and **Cancel** leaves the
+  field as it was. Save or cancel at the top, or press `Ctrl+S` or `Esc`.
+  Cancelling asks first if you changed anything.
 - **SSH keys** show their public key and fingerprint; the key itself cannot
   be changed. Everything else can.
 - While you edit, syncs leave your draft alone. Quitting asks before it
@@ -174,9 +175,10 @@ encrypted. The list takes a few seconds to load the first time.
 **Generator**, at the foot of the sidebar, or `Ctrl+G`. Make a password (5
 to 128 characters, with the character sets and minimums you choose) or a
 passphrase (3 to 20 words). It starts with a 20-character password and
-remembers the options you choose; the editor's generate button uses them
-too. Digits and symbols are colored so similar characters are easier to
-tell apart. **Copy** clears like any other copy.
+remembers the options you choose. The editor's generate button opens the
+same generator with the same options, and a change made in either place
+shows in the other. Digits and symbols are colored so similar characters
+are easier to tell apart. **Copy** clears like any other copy.
 
 ## Locking
 

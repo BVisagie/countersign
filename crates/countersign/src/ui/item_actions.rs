@@ -197,6 +197,7 @@ impl Detail {
     /// Leaves the editor, discarding unsaved changes.
     pub(super) fn close_editor(&self) {
         let Some(editor) = self.editor.borrow_mut().take() else { return };
+        editor.close_generator();
         self.root.remove(&editor.root);
         self.edit_bar.set_start_widget(gtk::Widget::NONE);
         self.edit_bar.set_end_widget(gtk::Widget::NONE);
