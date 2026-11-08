@@ -174,6 +174,8 @@ pub struct Editor {
     baseline: Cell<u64>,
     /// Whether the discard dialog is open, so a second request adds no other.
     asking: Cell<bool>,
+    /// The password generator's dialog, while it is open.
+    generator: RefCell<Option<adw::Dialog>>,
 }
 
 impl Editor {
@@ -216,6 +218,7 @@ impl Editor {
         page.add(&basics);
 
         let (mut username, mut password, mut totp, mut uri_group) = (None, None, None, None);
+        let mut generate_button = None;
         let mut uris = Vec::new();
         let mut card = None;
         let mut identity = Vec::new();
@@ -225,26 +228,9 @@ impl Editor {
                 let group = adw::PreferencesGroup::builder().title("Login").build();
                 let user = entry("Username", &text(&item["login"]["username"]));
                 let pass = secret("Password", &text(&item["login"]["password"]));
-                let generate = super::icon_button("view-refresh-symbolic", "Generate a password");
+                let generate = super::icon_button("view-refresh-symbolic", "Generate a password…");
                 pass.add_suffix(&generate);
-                {
-                    // Weak: a row holding its own handler would never be
-                    // freed, and its password with it.
-                    let (app, pass) = (app.clone(), pass.downgrade());
-                    generate.connect_clicked(move |_| {
-                        let (app, pass) = (app.clone(), pass.clone());
-                        glib::spawn_future_local(async move {
-                            // The options last used on the generator page.
-                            let options = app.settings.borrow().generator.clone();
-                            if let Ok(Response::Secret { value }) =
-                                app.request(Request::Generate { options }).await
-                                && let Some(pass) = pass.upgrade()
-                            {
-                                pass.set_text(value.expose());
-                            }
-                        });
-                    });
-                }
+                generate_button = Some(generate);
                 let key = secret("Authenticator key (TOTP)", &text(&item["login"]["totp"]));
                 group.add(&user);
                 group.add(&pass);
@@ -404,7 +390,16 @@ impl Editor {
             heading: if creating { "New item" } else { "Edit item" },
             baseline: Cell::new(0),
             asking: Cell::new(false),
+            generator: RefCell::default(),
         });
+        if let Some(generate) = generate_button {
+            let weak = Rc::downgrade(&editor);
+            generate.connect_clicked(move |_| {
+                if let Some(me) = weak.upgrade() {
+                    me.choose_password();
+                }
+            });
+        }
         for (original, row) in uris {
             editor.add_uri(original, row);
         }
@@ -518,6 +513,41 @@ impl Editor {
 
     pub fn focus(&self) {
         self.name.grab_focus();
+    }
+
+    /// Opens the generator; its **Use** fills the password field.
+    fn choose_password(self: &Rc<Self>) {
+        let Some(password) = &self.password else { return };
+        if self.generator.borrow().is_some() {
+            return;
+        }
+        // Weak: the dialog must not keep the row, and its password, alive.
+        let row = password.downgrade();
+        let dialog = super::generator::choose(&self.app, &self.root, move |value| {
+            if let Some(row) = row.upgrade() {
+                row.set_text(value.expose());
+            }
+        });
+        let weak = Rc::downgrade(self);
+        dialog.connect_closed(move |dialog| {
+            if let Some(me) = weak.upgrade() {
+                let mut open = me.generator.borrow_mut();
+                if open.as_ref() == Some(dialog) {
+                    open.take();
+                }
+            }
+        });
+        *self.generator.borrow_mut() = Some(dialog);
+    }
+
+    /// Closes the generator dialog, if it is open, as the editor closes.
+    pub fn close_generator(&self) {
+        // Take it out first: closing runs the `closed` handler, which
+        // borrows `generator` too.
+        let open = self.generator.borrow_mut().take();
+        if let Some(dialog) = open {
+            dialog.force_close();
+        }
     }
 
     fn add_uri(self: &Rc<Self>, original: Option<usize>, row: adw::EntryRow) {
