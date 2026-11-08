@@ -3,6 +3,23 @@
 What changed in each Countersign release. The Bitwarden CLI versions are
 the ones that release works with and installs.
 
+## 0.3.0
+
+Lets you choose what the editor generates. It needs the official Bitwarden
+CLI 2026.10.1 or newer, and installs 2026.10.1 when you let it.
+
+To update, install it as before, then quit Countersign with `Ctrl+Q` and
+start it again. The app and its background service talk to each other as
+before, so there is no need to stop the service first.
+
+- **The generator in the editor**: the password field's generate button
+  opens the generator instead of filling the field at once. Choose a
+  password or a passphrase, its length and characters or its words;
+  **Use** fills the field and **Cancel** leaves it as it was. The editor
+  and the Generator page share their options.
+- **No surprise replacement**: generating no longer overwrites a password
+  until you choose **Use**.
+
 ## 0.2.0
 
 Adds Bitwarden's archive and fixes a folder that was not there. It needs the
